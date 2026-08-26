@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Read-only proposal, credentialed execution</title>
+<style>
+  /* No remote font references — the file stays fully self-contained so it opens
+     correctly offline. Ayuthaya is a macOS system font, IBM Plex is the
+     documented KBW fallback, and both degrade cleanly to system stacks. */
+  :root{
+    --paper:#F5F5F5; --paper-2:#EEF0F5; --ink:#0B0D0F; --muted:#5B5B5B;
+    --soft:#838BA0; --rule:rgba(11,13,15,0.12); --rule-solid:#D3D7DE;
+    --accent:#3F2AC1; --link:#00002B;
+    --sans:'Ayuthaya','IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --serif:'IBM Plex Serif',Georgia,'Times New Roman',serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:48px 40px; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.5;
+  }
+  .wrap{max-width:1280px; margin:0 auto}
+  .eyebrow{
+    font-family:var(--mono); font-size:8px; letter-spacing:0.14em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 8px;
+  }
+  h1{
+    font-family:var(--serif); font-weight:400; font-size:28px;
+    margin:0 0 8px; color:var(--ink); letter-spacing:-0.01em;
+  }
+  .sub{margin:0 0 32px; color:var(--muted); font-size:16px; max-width:72ch}
+  svg{width:100%; height:auto; display:block}
+  footer{
+    margin-top:32px; padding-top:16px; border-top:1px solid var(--rule);
+    font-family:var(--mono); font-size:8px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--soft);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Alpaca options agent</p>
+  <h1>Read-only proposal, credentialed execution</h1>
+  <p class="sub">The language model proposes a direction. It never picks a strike, never sizes a position, and never holds an order credential. The risk guard is the only code path that can reach the broker &mdash; so a breach is unreachable, not merely forbidden.</p>
+
+<svg viewBox="0 0 1280 640" role="img" aria-labelledby="architecture-title architecture-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="architecture-title">Read-only proposal, credentialed execution</title>
+  <desc id="architecture-desc">Architecture diagram of an autonomous options-trading agent. A scheduled trigger drives two language-model roles that hold no credentials and can only read market data. Their proposals cross a trust boundary into a deterministic risk guard, which is the only component holding order keys and the only path to the broker. Passed trades reach Alpaca; vetoed ones terminate in a journal.</desc>
+
+  <defs>
+    <marker id="arch-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#5B5B5B"/>
+    </marker>
+    <marker id="arch-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3F2AC1"/>
+    </marker>
+    <marker id="arch-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00002B"/>
+    </marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#F5F5F5"/>
+
+  <!-- ============ TRUST BOUNDARIES (zones, painted first) ============ -->
+  <rect x="256" y="168" width="288" height="304" rx="8"
+        fill="rgba(63,42,193,0.05)" stroke="rgba(63,42,193,0.50)" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="272" y="192" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">NO CREDENTIALS</text>
+
+  <rect x="656" y="168" width="536" height="344" rx="8"
+        fill="rgba(63,42,193,0.05)" stroke="rgba(63,42,193,0.50)" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="672" y="192" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">HOLDS ORDER KEYS</text>
+
+  <!-- ============ ARROWS (drawn before boxes) ============ -->
+
+  <!-- 1. GitHub Actions -> Proposer : straight, shares y -->
+  <path d="M 200 244 H 272" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#arch-arrow)"/>
+
+  <!-- 2. Proposer -> Risk Guard : elbow via x=592 -->
+  <path d="M 520 244 H 584 Q 592 244 592 252 V 308 Q 592 316 600 316 H 672"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#arch-arrow)"/>
+
+  <!-- 3. Critic -> Risk Guard : elbow via x=616 -->
+  <path d="M 520 404 H 608 Q 616 404 616 396 V 364 Q 616 356 624 356 H 672"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#arch-arrow)"/>
+
+  <!-- 4. Risk Guard -> Alpaca : exits TOP edge. SOLID = execution path -->
+  <path d="M 784 284 V 252 Q 784 244 792 244 H 952"
+        fill="none" stroke="#3F2AC1" stroke-width="1.2" marker-end="url(#arch-arrow-accent)"/>
+
+  <!-- 5. Risk Guard -> Journal : exits BOTTOM edge. DASHED = terminal, non-executing -->
+  <path d="M 784 388 V 436 Q 784 444 792 444 H 952"
+        fill="none" stroke="#5B5B5B" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arch-arrow)"/>
+
+  <!-- 6. Alpaca -> Journal : straight, shares x -->
+  <path d="M 1060 284 V 396" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#arch-arrow)"/>
+
+  <!-- 7. Alpaca -> boundary A : read-only market data, over the top -->
+  <path d="M 1060 204 V 120 Q 1060 112 1052 112 H 408 Q 400 112 400 120 V 196"
+        fill="none" stroke="#00002B" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arch-arrow-link)"/>
+
+  <!-- ============ ARROW LABELS (mask + 8px gap above stroke) ============ -->
+  <rect x="216" y="224" width="40" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="236" y="233" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">TICK</text>
+
+  <rect x="524" y="224" width="64" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="556" y="233" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">PROPOSAL</text>
+
+  <rect x="540" y="384" width="56" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="568" y="393" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">VERDICT</text>
+
+  <rect x="856" y="224" width="40" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="876" y="233" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">PASS</text>
+
+  <rect x="856" y="424" width="40" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="876" y="433" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">VETO</text>
+
+  <rect x="1068" y="332" width="40" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="1088" y="341" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">FILL</text>
+
+  <rect x="552" y="92" width="96" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="600" y="101" fill="#00002B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">CHAIN, GREEKS</text>
+
+  <!-- ============ NODES ============ -->
+
+  <!-- GitHub Actions : input/trigger -->
+  <rect x="40" y="204" width="160" height="80" rx="6" fill="#F5F5F5"/>
+  <rect x="40" y="204" width="160" height="80" rx="6" fill="rgba(91,91,91,0.10)" stroke="#838BA0" stroke-width="1"/>
+  <rect x="48" y="212" width="36" height="12" rx="2" fill="transparent" stroke="rgba(131,139,160,0.40)" stroke-width="0.8"/>
+  <text x="66" y="221" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">CRON</text>
+  <text x="120" y="252" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">GitHub Actions</text>
+  <text x="120" y="272" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">every 15 min</text>
+
+  <!-- Proposer -->
+  <rect x="280" y="204" width="240" height="80" rx="6" fill="#F5F5F5"/>
+  <rect x="280" y="204" width="240" height="80" rx="6" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <rect x="288" y="212" width="28" height="12" rx="2" fill="transparent" stroke="rgba(11,13,15,0.40)" stroke-width="0.8"/>
+  <text x="302" y="221" fill="#0B0D0F" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">LLM</text>
+  <text x="400" y="252" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Proposer</text>
+  <text x="400" y="272" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">read-only MCP</text>
+
+  <!-- Critic -->
+  <rect x="280" y="364" width="240" height="80" rx="6" fill="#F5F5F5"/>
+  <rect x="280" y="364" width="240" height="80" rx="6" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <rect x="288" y="372" width="28" height="12" rx="2" fill="transparent" stroke="rgba(11,13,15,0.40)" stroke-width="0.8"/>
+  <text x="302" y="381" fill="#0B0D0F" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">LLM</text>
+  <text x="400" y="412" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Critic</text>
+  <text x="400" y="432" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">read-only MCP</text>
+
+  <!-- Risk Guard : THE ONE FOCAL NODE -->
+  <rect x="680" y="284" width="208" height="104" rx="6" fill="#F5F5F5"/>
+  <rect x="680" y="284" width="208" height="104" rx="6" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1.2"/>
+  <rect x="688" y="292" width="52" height="12" rx="2" fill="transparent" stroke="rgba(63,42,193,0.40)" stroke-width="0.8"/>
+  <text x="714" y="301" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">PYTHON</text>
+  <text x="784" y="336" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Risk Guard</text>
+  <text x="784" y="356" fill="#3F2AC1" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">14 gates, no LLM</text>
+  <text x="784" y="376" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">holds the keys</text>
+
+  <!-- Alpaca : external -->
+  <rect x="960" y="204" width="200" height="80" rx="6" fill="#F5F5F5"/>
+  <rect x="960" y="204" width="200" height="80" rx="6" fill="rgba(11,13,15,0.03)" stroke="rgba(11,13,15,0.30)" stroke-width="1"/>
+  <rect x="968" y="212" width="36" height="12" rx="2" fill="transparent" stroke="rgba(11,13,15,0.30)" stroke-width="0.8"/>
+  <text x="986" y="221" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">BROKER</text>
+  <text x="1060" y="252" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Alpaca</text>
+  <text x="1060" y="272" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">mleg, paper</text>
+
+  <!-- Journal : store -->
+  <rect x="960" y="404" width="200" height="80" rx="6" fill="#F5F5F5"/>
+  <rect x="960" y="404" width="200" height="80" rx="6" fill="rgba(11,13,15,0.05)" stroke="#5B5B5B" stroke-width="1"/>
+  <rect x="968" y="412" width="32" height="12" rx="2" fill="transparent" stroke="rgba(91,91,91,0.40)" stroke-width="0.8"/>
+  <text x="984" y="421" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">STORE</text>
+  <text x="1060" y="452" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Journal</text>
+  <text x="1060" y="472" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">journal.jsonl</text>
+
+  <!-- ============ LEGEND : horizontal strip ============ -->
+  <line x1="40" y1="552" x2="1240" y2="552" stroke="rgba(11,13,15,0.12)" stroke-width="0.8"/>
+  <text x="40" y="576" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">LEGEND</text>
+
+  <rect x="140" y="566" width="12" height="12" rx="2" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1"/>
+  <text x="160" y="576" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">FOCAL &mdash; THE ONLY CREDENTIALED COMPONENT</text>
+
+  <line x1="500" y1="572" x2="532" y2="572" stroke="#3F2AC1" stroke-width="1.2"/>
+  <text x="540" y="576" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">SOLID &mdash; EXECUTION PATH</text>
+
+  <line x1="784" y1="572" x2="816" y2="572" stroke="#5B5B5B" stroke-width="1" stroke-dasharray="5,4"/>
+  <text x="824" y="576" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">DASHED &mdash; READ OR TERMINAL, NEVER AN ORDER</text>
+
+  <rect x="1160" y="566" width="12" height="12" rx="2" fill="rgba(63,42,193,0.05)" stroke="rgba(63,42,193,0.50)" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="1180" y="576" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">TRUST BOUNDARY</text>
+</svg>
+
+  <footer>Theta Gate &middot; Alpaca AI Trading Agents Hackathon &middot; KBW skin</footer>
+</div>
+</body>
+</html>
