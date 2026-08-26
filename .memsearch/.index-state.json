@@ -1,11 +1,11 @@
 {
   "collection": "ms_alpaca_ai_trading_agent_23d6ba6a",
   "failed_files": [],
-  "indexed_chunks": 0,
+  "indexed_chunks": 3,
   "indexed_files": 1,
-  "last_completed_at": "2026-08-26T18:16:23.397253Z",
-  "last_started_at": "2026-08-26T18:16:22.702717Z",
-  "last_success_at": "2026-08-26T18:16:23.397253Z",
+  "last_completed_at": "2026-08-26T18:21:54.317373Z",
+  "last_started_at": "2026-08-26T18:21:53.320953Z",
+  "last_success_at": "2026-08-26T18:21:54.317373Z",
   "milvus_uri": "~/.memsearch/milvus.db",
   "operation": "index",
   "paths": [
@@ -14,5 +14,5 @@
   "schema_version": 1,
   "status": "ok",
   "total_files": 1,
-  "updated_at": "2026-08-26T18:16:23.397253Z"
+  "updated_at": "2026-08-26T18:21:54.317373Z"
 }
