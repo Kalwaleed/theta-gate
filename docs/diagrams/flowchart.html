@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fourteen gates, one veto sink</title>
+<style>
+  /* No remote font references — the file stays fully self-contained so it opens
+     correctly offline. Ayuthaya is a macOS system font, IBM Plex is the
+     documented KBW fallback, and both degrade cleanly to system stacks. */
+  :root{
+    --paper:#F5F5F5; --paper-2:#EEF0F5; --ink:#0B0D0F; --muted:#5B5B5B;
+    --soft:#838BA0; --rule:rgba(11,13,15,0.12); --rule-solid:#D3D7DE;
+    --accent:#3F2AC1; --link:#00002B;
+    --sans:'Ayuthaya','IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --serif:'IBM Plex Serif',Georgia,'Times New Roman',serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:48px 40px; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.5;
+  }
+  .wrap{max-width:1280px; margin:0 auto}
+  .eyebrow{
+    font-family:var(--mono); font-size:8px; letter-spacing:0.14em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 8px;
+  }
+  h1{
+    font-family:var(--serif); font-weight:400; font-size:28px;
+    margin:0 0 8px; color:var(--ink); letter-spacing:-0.01em;
+  }
+  .sub{margin:0 0 32px; color:var(--muted); font-size:16px; max-width:72ch}
+  svg{width:100%; height:auto; display:block}
+  footer{
+    margin-top:32px; padding-top:16px; border-top:1px solid var(--rule);
+    font-family:var(--mono); font-size:8px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--soft);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Risk guard</p>
+  <h1>Fourteen gates, one veto sink</h1>
+  <p class="sub">Fourteen deterministic checks, grouped by what each protects. A proposal must clear every group in order; any single failure drops to the same terminal sink and is logged with its reason. Nothing reaches the broker on a partial pass &mdash; the system is fail-closed by construction, not by convention.</p>
+
+<svg viewBox="0 0 1280 640" role="img" aria-labelledby="flowchart-title flowchart-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="flowchart-title">Fourteen gates, one veto sink</title>
+  <desc id="flowchart-desc">Flowchart of a trading agent's risk guard. A proposal passes left to right through five decision groups — environment, contract validity, price quality, exposure, and drawdown and deadline — which together contain fourteen individual gates. Passing every group reaches order submission. Failing any single group routes down to one shared veto sink that records the reason, so no partial pass can reach the broker.</desc>
+
+  <defs>
+    <marker id="flow-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#5B5B5B"/>
+    </marker>
+    <marker id="flow-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3F2AC1"/>
+    </marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#F5F5F5"/>
+
+  <!-- ============ ARROWS (drawn before nodes) ============ -->
+
+  <!-- YES chain, left to right, all share y=200 -->
+  <path d="M 168 200 H 192" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <path d="M 344 200 H 376" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <path d="M 528 200 H 560" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <path d="M 712 200 H 744" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <path d="M 896 200 H 928" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <path d="M 1080 200 H 1104" fill="none" stroke="#3F2AC1" stroke-width="1.2" marker-end="url(#flow-arrow-accent)"/>
+
+  <!-- NO exits : five paths, each with its own attach point on the sink, no overlaps -->
+  <!-- d1 : down, right at y=296, down to x=448 -->
+  <path d="M 272 256 V 288 Q 272 296 280 296 H 440 Q 448 296 448 304 V 432"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <!-- d2 : down, right at y=320, down to x=544 -->
+  <path d="M 456 256 V 312 Q 456 320 464 320 H 536 Q 544 320 544 328 V 432"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <!-- d3 : straight down, shares x with the sink centre -->
+  <path d="M 640 256 V 432" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <!-- d4 : down, left at y=320, down to x=736 -->
+  <path d="M 824 256 V 312 Q 824 320 816 320 H 744 Q 736 320 736 328 V 432"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+  <!-- d5 : down, left at y=296, down to x=832 -->
+  <path d="M 1008 256 V 288 Q 1008 296 1000 296 H 840 Q 832 296 832 304 V 432"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#flow-arrow)"/>
+
+  <!-- ============ ARROW LABELS ============ -->
+  <rect x="342" y="180" width="28" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="356" y="189" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">YES</text>
+  <rect x="526" y="180" width="28" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="540" y="189" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">YES</text>
+  <rect x="710" y="180" width="28" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="724" y="189" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">YES</text>
+  <rect x="894" y="180" width="28" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="908" y="189" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">YES</text>
+  <rect x="1078" y="180" width="28" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="1092" y="189" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">YES</text>
+
+  <!-- NO labels, offset to the side of each vertical drop -->
+  <rect x="280" y="262" width="24" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="292" y="271" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">NO</text>
+  <rect x="464" y="262" width="24" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="476" y="271" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">NO</text>
+  <rect x="648" y="262" width="24" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="660" y="271" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">NO</text>
+  <rect x="792" y="262" width="24" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="804" y="271" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">NO</text>
+  <rect x="976" y="262" width="24" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="988" y="271" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">NO</text>
+
+  <!-- ============ GATE NAMES above each diamond ============ -->
+  <text x="272" y="104" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">PAPER_ENV</text>
+  <text x="272" y="116" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">KILL_SWITCH</text>
+
+  <text x="456" y="104" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">GREEKS_PRESENT</text>
+  <text x="456" y="116" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">DTE · DELTA_BAND</text>
+
+  <text x="640" y="104" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">CREDIT_QUALITY</text>
+  <text x="640" y="116" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">QUOTE_SANITY</text>
+
+  <text x="824" y="104" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">MAX_LOSS · OPEN_RISK</text>
+  <text x="824" y="116" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">CONCURRENT · BP_FLOOR</text>
+
+  <text x="1008" y="104" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">DAILY · CUMULATIVE</text>
+  <text x="1008" y="116" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle" letter-spacing="0.06em">DEADLINE</text>
+
+  <!-- ============ NODES ============ -->
+
+  <!-- Start oval -->
+  <rect x="40" y="172" width="128" height="56" rx="28" fill="#F5F5F5"/>
+  <rect x="40" y="172" width="128" height="56" rx="28" fill="rgba(91,91,91,0.10)" stroke="#838BA0" stroke-width="1"/>
+  <text x="104" y="206" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Proposal</text>
+
+  <!-- Diamond 1 : Environment -->
+  <path d="M 272 144 L 344 200 L 272 256 L 200 200 Z" fill="#F5F5F5"/>
+  <path d="M 272 144 L 344 200 L 272 256 L 200 200 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="272" y="196" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Environment</text>
+  <text x="272" y="212" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">2 gates</text>
+
+  <!-- Diamond 2 : Contract -->
+  <path d="M 456 144 L 528 200 L 456 256 L 384 200 Z" fill="#F5F5F5"/>
+  <path d="M 456 144 L 528 200 L 456 256 L 384 200 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="456" y="196" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Contract</text>
+  <text x="456" y="212" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">3 gates</text>
+
+  <!-- Diamond 3 : Price -->
+  <path d="M 640 144 L 712 200 L 640 256 L 568 200 Z" fill="#F5F5F5"/>
+  <path d="M 640 144 L 712 200 L 640 256 L 568 200 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="640" y="196" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Price</text>
+  <text x="640" y="212" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">2 gates</text>
+
+  <!-- Diamond 4 : Exposure -->
+  <path d="M 824 144 L 896 200 L 824 256 L 752 200 Z" fill="#F5F5F5"/>
+  <path d="M 824 144 L 896 200 L 824 256 L 752 200 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="824" y="196" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Exposure</text>
+  <text x="824" y="212" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">4 gates</text>
+
+  <!-- Diamond 5 : Drawdown -->
+  <path d="M 1008 144 L 1080 200 L 1008 256 L 936 200 Z" fill="#F5F5F5"/>
+  <path d="M 1008 144 L 1080 200 L 1008 256 L 936 200 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="1008" y="196" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Drawdown</text>
+  <text x="1008" y="212" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">3 gates</text>
+
+  <!-- End oval -->
+  <rect x="1112" y="172" width="144" height="56" rx="28" fill="#F5F5F5"/>
+  <rect x="1112" y="172" width="144" height="56" rx="28" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="1184" y="198" fill="#0B0D0F" font-size="12" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Submit</text>
+  <text x="1184" y="214" fill="#5B5B5B" font-size="8"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">mleg, limit</text>
+
+  <!-- THE VETO SINK : the one focal node -->
+  <rect x="384" y="440" width="512" height="96" rx="6" fill="#F5F5F5"/>
+  <rect x="384" y="440" width="512" height="96" rx="6" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1.2"/>
+  <rect x="396" y="452" width="52" height="12" rx="2" fill="transparent" stroke="rgba(63,42,193,0.40)" stroke-width="0.8"/>
+  <text x="422" y="461" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+  <text x="640" y="492" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Veto, logged with its reason</text>
+  <text x="640" y="516" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">surfaces in the dashboard&rsquo;s &ldquo;Why no trade&rdquo; panel</text>
+
+  <!-- ============ LEGEND ============ -->
+  <line x1="40" y1="576" x2="1240" y2="576" stroke="rgba(11,13,15,0.12)" stroke-width="0.8"/>
+  <text x="40" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">LEGEND</text>
+
+  <path d="M 140 594 L 152 588 L 164 594 L 152 600 Z" fill="#ffffff" stroke="#0B0D0F" stroke-width="0.8"/>
+  <text x="176" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">GATE GROUP &mdash; ALL ITS CHECKS MUST PASS</text>
+
+  <rect x="512" y="590" width="12" height="12" rx="2" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1"/>
+  <text x="532" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">FOCAL &mdash; EVERY FAILURE ENDS IN THE SAME PLACE</text>
+
+  <text x="944" y="600" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">FIRST REJECTION WINS &mdash; NO GATE IS RE-EVALUATED</text>
+</svg>
+
+  <footer>Theta Gate &middot; Alpaca AI Trading Agents Hackathon &middot; KBW skin</footer>
+</div>
+</body>
+</html>

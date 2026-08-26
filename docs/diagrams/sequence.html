@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A veto ends before the broker</title>
+<style>
+  /* No remote font references — the file stays fully self-contained so it opens
+     correctly offline. Ayuthaya is a macOS system font, IBM Plex is the
+     documented KBW fallback, and both degrade cleanly to system stacks. */
+  :root{
+    --paper:#F5F5F5; --paper-2:#EEF0F5; --ink:#0B0D0F; --muted:#5B5B5B;
+    --soft:#838BA0; --rule:rgba(11,13,15,0.12); --rule-solid:#D3D7DE;
+    --accent:#3F2AC1; --link:#00002B;
+    --sans:'Ayuthaya','IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --serif:'IBM Plex Serif',Georgia,'Times New Roman',serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:48px 40px; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.5;
+  }
+  .wrap{max-width:1280px; margin:0 auto}
+  .eyebrow{
+    font-family:var(--mono); font-size:8px; letter-spacing:0.14em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 8px;
+  }
+  h1{
+    font-family:var(--serif); font-weight:400; font-size:28px;
+    margin:0 0 8px; color:var(--ink); letter-spacing:-0.01em;
+  }
+  .sub{margin:0 0 32px; color:var(--muted); font-size:16px; max-width:72ch}
+  svg{width:100%; height:auto; display:block}
+  footer{
+    margin-top:32px; padding-top:16px; border-top:1px solid var(--rule);
+    font-family:var(--mono); font-size:8px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--soft);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">One tick</p>
+  <h1>A veto ends before the broker</h1>
+  <p class="sub">Two proposals in the same fifteen-minute tick. The first fails a gate and dies inside the guard &mdash; the broker lifeline is never touched. The second clears all fourteen and reaches the market. The guard is the only participant that can start a conversation with Alpaca.</p>
+
+<svg viewBox="0 0 1280 640" role="img" aria-labelledby="sequence-title sequence-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="sequence-title">A veto ends before the broker</title>
+  <desc id="sequence-desc">Sequence diagram of one agent tick with four participants: a language-model proposer, a deterministic risk guard, a journal, and the Alpaca broker. In the first exchange the guard evaluates a proposal, rejects it on a credit-quality gate, and logs the veto — no message reaches the broker at all. In the second exchange a different proposal passes every gate, the guard submits a multi-leg order to Alpaca, receives a fill, and logs it.</desc>
+
+  <defs>
+    <marker id="seq-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#5B5B5B"/>
+    </marker>
+    <marker id="seq-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3F2AC1"/>
+    </marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#F5F5F5"/>
+
+  <!-- ============ LIFELINES (drawn first, behind everything) ============ -->
+  <line x1="200"  y1="152" x2="200"  y2="544" stroke="#838BA0" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="480"  y1="152" x2="480"  y2="544" stroke="#3F2AC1" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="800"  y1="152" x2="800"  y2="544" stroke="#838BA0" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="1080" y1="152" x2="1080" y2="544" stroke="#838BA0" stroke-width="1" stroke-dasharray="4,4"/>
+
+  <!-- Exchange separator -->
+  <line x1="40" y1="356" x2="1240" y2="356" stroke="rgba(11,13,15,0.12)" stroke-width="0.8" stroke-dasharray="2,6"/>
+
+  <!-- ============ ACTIVATION BARS ============ -->
+  <rect x="474" y="208" width="12" height="120" rx="2" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1"/>
+  <rect x="474" y="408" width="12" height="104" rx="2" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1"/>
+  <rect x="1074" y="440" width="12" height="32" rx="2" fill="rgba(11,13,15,0.05)" stroke="#5B5B5B" stroke-width="1"/>
+
+  <!-- ============ MESSAGES ============ -->
+
+  <!-- EXCHANGE 1 : the reject -->
+  <path d="M 200 208 H 466" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#seq-arrow)"/>
+
+  <!-- self-call : evaluate gates -->
+  <path d="M 486 240 H 536 Q 544 240 544 248 V 260 Q 544 268 536 268 H 494"
+        fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#seq-arrow)"/>
+
+  <!-- REJECT : dashed return, accent. The hero of the diagram. -->
+  <path d="M 474 296 H 208" fill="none" stroke="#3F2AC1" stroke-width="1.2"
+        stroke-dasharray="5,4" marker-end="url(#seq-arrow-accent)"/>
+
+  <!-- LOG VETO : guard to journal. Does not cross the broker lifeline. -->
+  <path d="M 486 324 H 792" fill="none" stroke="#5B5B5B" stroke-width="1"
+        stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+
+  <!-- EXCHANGE 2 : the pass -->
+  <path d="M 200 408 H 466" fill="none" stroke="#5B5B5B" stroke-width="1" marker-end="url(#seq-arrow)"/>
+  <path d="M 486 440 H 1066" fill="none" stroke="#3F2AC1" stroke-width="1.2" marker-end="url(#seq-arrow-accent)"/>
+  <path d="M 1074 472 H 494" fill="none" stroke="#5B5B5B" stroke-width="1"
+        stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+  <path d="M 486 504 H 792" fill="none" stroke="#5B5B5B" stroke-width="1"
+        stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+
+  <!-- ============ MESSAGE LABELS (mask + 8px gap above stroke) ============ -->
+  <rect x="240" y="188" width="128" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="304" y="197" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">PROPOSE BULL PUT</text>
+
+  <rect x="552" y="234" width="136" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="620" y="243" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">EVALUATE 14 GATES</text>
+
+  <rect x="256" y="276" width="52" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="282" y="285" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">REJECT</text>
+
+  <rect x="324" y="300" width="176" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="412" y="309" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">credit/width 0.52 &gt; 0.45</text>
+
+  <rect x="588" y="304" width="72" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="624" y="313" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">LOG VETO</text>
+
+  <rect x="236" y="388" width="136" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="304" y="397" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">PROPOSE BEAR CALL</text>
+
+  <rect x="712" y="420" width="96" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="760" y="429" fill="#3F2AC1" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">SUBMIT MLEG</text>
+
+  <rect x="736" y="452" width="48" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="760" y="461" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">FILLED</text>
+
+  <rect x="592" y="484" width="64" height="12" rx="2" fill="#F5F5F5"/>
+  <text x="624" y="493" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        text-anchor="middle" letter-spacing="0.06em">LOG FILL</text>
+
+  <!-- ============ EDITORIAL CALLOUT ============ -->
+  <rect x="740" y="198" width="280" height="24" rx="2" fill="#F5F5F5"/>
+  <text x="880" y="216" fill="#3F2AC1" font-size="16" font-style="italic"
+        font-family="'IBM Plex Serif',Georgia,serif" text-anchor="middle">The broker lifeline stays idle.</text>
+  <rect x="716" y="228" width="328" height="16" rx="2" fill="#F5F5F5"/>
+  <text x="880" y="240" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">A vetoed trade never becomes a request.</text>
+  <!-- leader terminates ON the Alpaca lifeline, in the stretch where it is idle -->
+  <path d="M 1048 244 V 288 Q 1048 296 1056 296 H 1080"
+        fill="none" stroke="rgba(63,42,193,0.50)" stroke-width="0.8" stroke-dasharray="3,3"/>
+
+  <!-- ============ EXCHANGE TAGS ============ -->
+  <text x="40" y="180" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">10:30 ET</text>
+  <text x="40" y="384" fill="#838BA0" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">13:30 ET</text>
+
+  <!-- ============ PARTICIPANT HEADERS (drawn last) ============ -->
+  <rect x="104" y="80" width="192" height="72" rx="6" fill="#F5F5F5"/>
+  <rect x="104" y="80" width="192" height="72" rx="6" fill="#ffffff" stroke="#0B0D0F" stroke-width="1"/>
+  <text x="200" y="116" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Proposer</text>
+  <text x="200" y="136" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">Claude</text>
+
+  <rect x="384" y="80" width="192" height="72" rx="6" fill="#F5F5F5"/>
+  <rect x="384" y="80" width="192" height="72" rx="6" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1.2"/>
+  <text x="480" y="116" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Risk Guard</text>
+  <text x="480" y="136" fill="#3F2AC1" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">pure Python</text>
+
+  <rect x="704" y="80" width="192" height="72" rx="6" fill="#F5F5F5"/>
+  <rect x="704" y="80" width="192" height="72" rx="6" fill="rgba(11,13,15,0.05)" stroke="#5B5B5B" stroke-width="1"/>
+  <text x="800" y="116" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Journal</text>
+  <text x="800" y="136" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">journal.jsonl</text>
+
+  <rect x="984" y="80" width="192" height="72" rx="6" fill="#F5F5F5"/>
+  <rect x="984" y="80" width="192" height="72" rx="6" fill="rgba(11,13,15,0.03)" stroke="rgba(11,13,15,0.30)" stroke-width="1"/>
+  <text x="1080" y="116" fill="#0B0D0F" font-size="16" font-weight="600"
+        font-family="'Ayuthaya','IBM Plex Sans',-apple-system,sans-serif" text-anchor="middle">Alpaca</text>
+  <text x="1080" y="136" fill="#5B5B5B" font-size="12"
+        font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace" text-anchor="middle">paper API</text>
+
+  <!-- ============ LEGEND ============ -->
+  <line x1="40" y1="576" x2="1240" y2="576" stroke="rgba(11,13,15,0.12)" stroke-width="0.8"/>
+  <text x="40" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.14em">LEGEND</text>
+
+  <line x1="140" y1="596" x2="172" y2="596" stroke="#5B5B5B" stroke-width="1"/>
+  <text x="180" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">SOLID &mdash; CALL</text>
+
+  <line x1="332" y1="596" x2="364" y2="596" stroke="#5B5B5B" stroke-width="1" stroke-dasharray="5,4"/>
+  <text x="372" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">DASHED &mdash; RETURN OR LOG</text>
+
+  <rect x="616" y="590" width="12" height="12" rx="2" fill="rgba(63,42,193,0.08)" stroke="#3F2AC1" stroke-width="1"/>
+  <text x="636" y="600" fill="#5B5B5B" font-size="8" font-family="'IBM Plex Mono',ui-monospace,Menlo,monospace"
+        letter-spacing="0.06em">ACTIVE &mdash; THE DETERMINISTIC GATE, HOLDING THE DECISION</text>
+</svg>
+
+  <footer>Theta Gate &middot; Alpaca AI Trading Agents Hackathon &middot; KBW skin</footer>
+</div>
+</body>
+</html>
