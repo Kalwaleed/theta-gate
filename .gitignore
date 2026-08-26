@@ -1,0 +1,24 @@
+# Secrets — never commit. Keys live in the shell env and in GitHub Actions Secrets.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local scratch
+scratch/
+*.local.json
+
+# NOTE: HALT is deliberately NOT ignored. It is the kill switch, and GitHub
+# Actions runs are stateless — the file only survives between ticks by being
+# committed. Same reason data/journal.jsonl is committed.
