@@ -1,0 +1,18 @@
+{
+  "collection": "ms_alpaca_ai_trading_agent_23d6ba6a",
+  "failed_files": [],
+  "indexed_chunks": 1,
+  "indexed_files": 1,
+  "last_completed_at": "2026-08-26T14:53:18.337151Z",
+  "last_started_at": "2026-08-26T14:53:17.602076Z",
+  "last_success_at": "2026-08-26T14:53:18.337151Z",
+  "milvus_uri": "~/.memsearch/milvus.db",
+  "operation": "index",
+  "paths": [
+    "/Users/papasmurf/Documents/Code_Projects/ClaudeCode/Projects/Alpaca_AI_Trading_Agent/.memsearch/memory"
+  ],
+  "schema_version": 1,
+  "status": "ok",
+  "total_files": 1,
+  "updated_at": "2026-08-26T14:53:18.337151Z"
+}

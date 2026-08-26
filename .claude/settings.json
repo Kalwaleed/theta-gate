@@ -1,0 +1,46 @@
+{
+  "$comment": [
+    "Project-scoped permissions. Committed so the whole team shares them.",
+    "Contains no secrets — allow/deny patterns only.",
+    "",
+    "DESIGN RULE: read verbs are allowlisted, write verbs are not.",
+    "The Alpaca CLI is Alpha Preview and has NO confirmation prompts on any",
+    "command, so a blanket Bash(alpaca:*) would silently authorise",
+    "'alpaca position close-all'. Order-placing and position-closing commands",
+    "are deliberately absent from allow and, for the two destructive ones,",
+    "explicitly denied so they always surface."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(uvx:*)",
+      "Bash(gh:*)",
+      "Bash(python3:*)",
+      "Bash(streamlit:*)",
+
+      "Bash(alpaca account:*)",
+      "Bash(alpaca clock:*)",
+      "Bash(alpaca calendar:*)",
+      "Bash(alpaca data:*)",
+      "Bash(alpaca asset:*)",
+      "Bash(alpaca option contracts:*)",
+      "Bash(alpaca option get:*)",
+      "Bash(alpaca order list:*)",
+      "Bash(alpaca order get:*)",
+      "Bash(alpaca position list:*)",
+      "Bash(alpaca position get:*)",
+      "Bash(alpaca doctor:*)",
+      "Bash(alpaca version:*)",
+      "Bash(alpaca --help:*)",
+      "Bash(alpaca api GET:*)",
+
+      "Read(env.example)"
+    ],
+    "deny": [
+      "Bash(alpaca position close-all:*)",
+      "Bash(alpaca order cancel-all:*)",
+      "Bash(alpaca profile login --live:*)",
+      "Bash(alpaca wallet:*)"
+    ]
+  }
+}

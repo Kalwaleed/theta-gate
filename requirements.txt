@@ -1,0 +1,14 @@
+# Three dependencies. Everything else is stdlib or the Alpaca CLI via subprocess.
+#
+# Deliberately NOT here:
+#   alpaca-py       the CLI wrapper is the integration, and the hackathon
+#                   requires CLI/MCP rather than the plain SDK
+#   pydantic        two frozen dataclasses and a short validator
+#   python-dotenv   the CLI and MCP server both read process env, so a loader
+#                   would create a second, divergent source of truth
+#   requests        urllib.request covers the one REST fallback
+#   apscheduler     GitHub Actions is the scheduler
+
+claude-agent-sdk==0.2.144
+streamlit==1.62.0
+pytest==9.1.1
