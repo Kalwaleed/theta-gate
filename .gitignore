@@ -22,3 +22,4 @@ scratch/
 # NOTE: HALT is deliberately NOT ignored. It is the kill switch, and GitHub
 # Actions runs are stateless — the file only survives between ticks by being
 # committed. Same reason data/journal.jsonl is committed.
+.gstack/
