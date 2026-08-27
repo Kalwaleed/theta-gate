@@ -16,6 +16,6 @@ Up to 5 X/LinkedIn post links can be submitted for the $500 × 2 social-engageme
 
 | # | Slug | Status | X link | LinkedIn link |
 |---|---|---|---|---|
-| 01 | kickoff-and-the-first-finding | posted 2026-08-27 | [link](https://x.com/KhaledAlwaleed/status/2092879101082128628?s=20) | _paste link_ |
+| 01 | kickoff-and-the-first-finding | posted 2026-08-27 | [link](https://x.com/KhaledAlwaleed/status/2092879101082128628?s=20) | [link](https://www.linkedin.com/feed/update/urn:li:share:7498670508427886592/) |
 
 Links go in the two columns above as they're posted — the submission needs up to 5 URLs for the social-engagement prize, and this table is where they'll live so nothing gets hunted down at deadline.
