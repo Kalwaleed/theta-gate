@@ -20,6 +20,7 @@ GOV = {
         "width_dollars": 5, "dte_min": 4, "dte_max": 9,
         "short_delta_min": 0.16, "short_delta_max": 0.25,
         "credit_quality_expected_ratio": 0.8, "credit_quality_max_deviation": 0.40,
+        "min_credit_pct_of_width": 0.10, "dte_preferred_max": 6,
     },
     "entry": {
         "windows_et": ["10:30", "13:30"], "max_new_entries_per_session": 2,
@@ -211,6 +212,22 @@ def test_credit_quality_relative_band():
     )
     reason = risk.gate_credit_quality(base_state(), bad_plan, GOV, NOW)
     assert reason is not None
+
+
+def test_minimum_credit_floor():
+    """Fable 5 review: the real trade's ratio (0.12) clears the 0.10 floor;
+    a thin quote at the low-delta end of the band must not."""
+    plan = real_plan()
+    reason = risk.gate_minimum_credit(base_state(), plan, GOV, NOW)
+    assert reason is None
+
+    thin_plan = spread.SpreadPlan(
+        underlying="SPY", direction="bull_put", expiry="2026-09-02",
+        short=plan.short, long=plan.long, width=5, credit=0.40, qty=0, max_loss_dollars=460,
+    )
+    reason = risk.gate_minimum_credit(base_state(), thin_plan, GOV, NOW)
+    assert reason is not None
+    assert "minimum_credit" in reason
 
 
 def test_cumulative_drawdown_halts():

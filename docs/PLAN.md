@@ -121,7 +121,7 @@ Bonus: the MCP server ships `search_alpaca_docs` / `get_alpaca_endpoint_docs` as
 
 ## Risk guard
 
-Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 15 passing tests in `test_agent.py`.
+Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 16 passing tests in `test_agent.py`.
 
 | Gate | Rule |
 |---|---|
@@ -132,6 +132,7 @@ Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injec
 | `gate_dte_window` | 4 ≤ DTE ≤ 9, expiry ≠ today, entry before 15:00 ET. |
 | `gate_delta_band` | Short leg 0.16 ≤ \|delta\| ≤ 0.25. |
 | `gate_credit_quality` | **Recalibrated.** Reject if credit/width deviates more than ±40% from `0.8 × short_delta`. Catches a bad quote without vetoing the strategy — see the live-probe corrections below. |
+| `gate_minimum_credit` | **Added, Fable 5 review.** Absolute floor: credit ≥ 10% of width. `gate_credit_quality`'s own tolerance can pass a technically-in-band trade too thin to be worth the execution risk — this catches that case. |
 | `gate_quote_sanity` | Per leg: bid > 0, ask > bid, spread ≤ 15% of mid. |
 | `gate_vrp_present` | ATM IV ≥ 20-day realised vol. Operationalises the one edge this strategy claims — sell premium only when it's actually rich. |
 | `gate_max_loss_per_trade` | Sized on **max loss**, never premium. `(width − credit) × 100 × qty ≤ $1,000`. |
@@ -159,6 +160,18 @@ The only edge premium selling can claim is the **variance risk premium**: implie
 This is the honest thesis: the agent does not claim to predict the market. It harvests a documented structural premium under a hard risk cap, and reports its sample size truthfully.
 
 **Validated end to end:** chain fetch with greeks · delta-based strike selection · mleg body with negative limit price · simultaneous 2-leg fill at price improvement · margin behaviour · exit via reverse mleg with positive limit · position closed and margin released.
+
+### Fable 5 strategy review, 28 Aug 2026
+
+Claude Fable 5 independently reviewed the final design (2-leg vertical, live-probe corrections included) as a second opinion before Monday's build. Scored **8/10** — Technology Implementation 9, Presentation & Execution 9, Creativity & Originality 8, P&L Performance 5 ("a coin flip weighted slightly your way by the credit floor and VRP gate; six sessions is noise, the design controls the left tail, not the sign"). Biggest named risk: a correlated SPY/QQQ down-move trips 2x-credit stops on multiple positions the same day — the drawdown gates cap the damage, not the sign of the week.
+
+Five recommendations, two implemented today, three deferred to Monday's `brain.py`/`loop.py` build:
+
+- **Implemented:** `gate_minimum_credit` — 10%-of-width absolute credit floor (table above).
+- **Implemented:** DTE preference — `dte_preferred_max: 6` in `governance.json`. `gate_dte_window` still hard-enforces 4–9; this is a *query-order* preference for `loop.py`'s expiration selection, biasing toward 4-6 DTE (more theta captured before Thursday's flatten) and falling back to 7-9 only when no strike in the delta band exists there.
+- **Deferred — order-pricing discipline:** walk the limit price toward the NBBO mid over the poll window instead of a single static quote, to reduce the vig cost the live probe measured (~$7 round trip). Belongs in `loop.py`'s submission logic, not `risk.py` — it's an execution tactic, not a gate.
+- **Deferred — legged-condor neutral mode:** when the LLM's directional conviction is low, submit two independent verticals (a bull put + a bear call) instead of forcing a directional pick. Requires the `Proposal` schema to carry a "neutral" direction that triggers two 2-leg orders, and `gate_concurrent` to treat the linked pair correctly for exposure without breaking the existing 1-per-underlying cap. A `brain.py`/`loop.py`-level feature, not a `risk.py` change.
+- **Deferred — sharpened partial-fill repair:** on a partial fill, actively close the exposed leg immediately with its own order rather than cancel-and-wait for the 60s timeout. Tightens the existing partial-fill unwind; implement alongside `loop.py`'s order-submission logic Monday.
 
 ---
 
@@ -209,7 +222,7 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 | `alpaca.py` | CLI subprocess wrapper, paper asserted at every call | ✅ built |
 | `spread.py` | Strike selection + mleg body construction. Pure. | ✅ built |
 | `risk.py` | The gates + `check_all()` + `exit_signal()`. Stdlib only. | ✅ built |
-| `test_agent.py` | 15 tests, fixtures from the real 26 Aug chain | ✅ built, all passing |
+| `test_agent.py` | 16 tests, fixtures from the real 26 Aug chain | ✅ built, all passing |
 | `governance.json` | Every risk number, one place | ✅ built |
 | `brain.py` | The two LLM calls, read-only MCP allowlist, fail-closed validator | not yet — Monday |
 | `loop.py` | One tick: clock → orphan → exits → entry → journal | not yet — Monday |
@@ -271,7 +284,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 15/15. Null greeks rejected; mleg body has `order_class="mleg"`, **`limit_price < 0`**, top-level `qty`, no top-level `symbol`/`side`, exactly 2 legs, correct sides/intents; `ratio_qty` GCD 1; sizing from max loss; delta band with no silent fallback; deadline blocks opens; cumulative drawdown halts; equity line flags as orphan.
+1. `pytest -q` — currently 16/16. Null greeks rejected; mleg body has `order_class="mleg"`, **`limit_price < 0`**, top-level `qty`, no top-level `symbol`/`side`, exactly 2 legs, correct sides/intents; `ratio_qty` GCD 1; sizing from max loss; delta band with no silent fallback; deadline blocks opens; cumulative drawdown halts; equity line flags as orphan.
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing.
