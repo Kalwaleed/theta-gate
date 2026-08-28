@@ -1,0 +1,78 @@
+{
+  "_comment": "Every risk number Theta Gate enforces, in one place. Rendered verbatim in the Streamlit dashboard next to the line 'no LLM can write to this file'. No LLM does — brain.py never imports json.dump against this path.",
+
+  "strategy": {
+    "underlyings": ["SPY", "QQQ"],
+    "structure": "vertical",
+    "legs": 2,
+    "width_dollars": 5,
+    "dte_min": 4,
+    "dte_max": 9,
+    "short_delta_min": 0.16,
+    "short_delta_max": 0.25,
+    "_credit_quality_comment": "Verified live 26 Aug 2026: credit/width is NOT a fixed 0.20-0.45 band. It tracks ~0.8 x short_delta and falls as width increases (5-wide 0.120 -> 25-wide 0.056). This gate catches a bad quote relative to that curve, not an absolute ratio.",
+    "credit_quality_expected_ratio": 0.8,
+    "credit_quality_max_deviation": 0.40
+  },
+
+  "entry": {
+    "windows_et": ["10:30", "13:30"],
+    "max_new_entries_per_session": 2,
+    "no_entries_after_date": "2026-09-02",
+    "no_entries_after_time_et": "16:00",
+    "_deadline_comment": "Sep 4 is NFP day, 08:30 ET, 90 min before the 11:00 ET submission deadline (verified against bls.gov). Flatten Thursday, not Friday."
+  },
+
+  "exit": {
+    "take_profit_pct_of_credit": 0.50,
+    "stop_loss_multiple_of_credit": 2.0,
+    "time_exit_dte": 2,
+    "force_close_start_date": "2026-09-03",
+    "force_close_start_time_et": "15:00",
+    "force_close_ladder": [
+      {"at_et": "15:00", "action": "limit_at_mid"},
+      {"at_et": "15:30", "action": "cross_the_spread"},
+      {"at_et": "15:50", "action": "market_mleg"}
+    ]
+  },
+
+  "risk": {
+    "max_loss_per_trade_dollars": 1000,
+    "max_total_open_risk_dollars": 3000,
+    "max_concurrent_positions": 3,
+    "max_positions_per_underlying": 1,
+    "options_buying_power_floor_dollars": 25000,
+    "options_buying_power_floor_multiple_of_max_loss": 5,
+    "daily_drawdown_halt_pct": -0.02,
+    "cumulative_drawdown_halt_equity_dollars": 96000,
+    "starting_equity_dollars": 100000
+  },
+
+  "quote_sanity": {
+    "min_bid_dollars": 0.01,
+    "max_spread_pct_of_mid": 0.15,
+    "max_quote_age_seconds": 600
+  },
+
+  "vrp": {
+    "_comment": "The only edge this strategy claims. Verified live: a fairly priced chain has zero arithmetic edge, negative by exactly the bid-ask cost. Sell premium only when it is actually rich.",
+    "realised_vol_lookback_days": 20,
+    "require_atm_iv_gte_realised_vol": true
+  },
+
+  "environment": {
+    "paper_flag_true_values": ["true", "1", "yes"],
+    "_paper_flag_comment": "Case-insensitive membership test only. Never a truthiness cast. Any value outside this set selects live, including 'paper', 'TRUE ' with a trailing space, and 'yes!'.",
+    "required_endpoint": "https://paper-api.alpaca.markets",
+    "required_account_status": ["ACTIVE", "PAPER_ONLY"],
+    "required_effective_options_level": 3
+  },
+
+  "operational": {
+    "unfilled_order_cancel_after_seconds": 60,
+    "order_poll_max_attempts": 60,
+    "no_bulk_operations": true,
+    "_no_bulk_comment": "cancel_all_orders, close_all_positions, close_position, exercise_options_position and do_not_exercise_options_position all require explicit human confirmation on Alpaca's own paper-trading skills, regardless of confirmation_mode. Theta Gate never calls any of them. Every close is an explicit order naming both legs.",
+    "max_loop_exceptions_before_halt": 3
+  }
+}
