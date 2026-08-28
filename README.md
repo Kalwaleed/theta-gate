@@ -8,7 +8,7 @@ This file is the getting-started guide and team workflow note. The full design d
 
 ## Status
 
-Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `governance.json`, `test_agent.py` (15/15). Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `brain.py`, `loop.py`, `app.py`, the GitHub Actions workflow. See the Repo layout table in `docs/PLAN.md` for the live checklist.
+Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `governance.json`, `test_agent.py` (16/16). Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `brain.py`, `loop.py`, `app.py`, the GitHub Actions workflow. See the Repo layout table in `docs/PLAN.md` for the live checklist.
 
 ## Quick start
 

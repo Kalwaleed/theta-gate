@@ -99,6 +99,21 @@ def gate_credit_quality(state: dict, plan, gov: dict, now: datetime) -> str | No
     return None
 
 
+def gate_minimum_credit(state: dict, plan, gov: dict, now: datetime) -> str | None:
+    """Fable 5 strategy review, 28 Aug 2026: an absolute floor, separate from
+    the relative credit_quality check above. At the low end of the delta
+    band with that check's own tolerance, credit can be too thin to be
+    worth the mechanical and execution risk even though it passes the
+    relative test."""
+    if plan.width <= 0:
+        return "minimum_credit: zero-width spread"
+    ratio = plan.credit / plan.width
+    floor = gov["strategy"]["min_credit_pct_of_width"]
+    if ratio < floor:
+        return f"minimum_credit: ratio {ratio:.3f} below floor {floor:.3f}"
+    return None
+
+
 def gate_quote_sanity(state: dict, plan, gov: dict, now: datetime) -> str | None:
     max_spread_pct = gov["quote_sanity"]["max_spread_pct_of_mid"]
     for leg, name in ((plan.short, "short"), (plan.long, "long")):
@@ -236,6 +251,7 @@ _STATE_ONLY_GATES = [
     gate_dte_window,
     gate_delta_band,
     gate_credit_quality,
+    gate_minimum_credit,
     gate_quote_sanity,
     gate_vrp_present,
     gate_concurrent,
