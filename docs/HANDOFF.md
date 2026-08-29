@@ -19,7 +19,9 @@ Every file in the trading path is built, tested, and committed. **45/45 tests pa
 | `app.py` (Streamlit dashboard) | **Not built** — Tuesday, does not block trading |
 | `README.md` write-up for judges | **Not built** — Thursday, needs real trading history |
 
-GitHub is fully configured: three secrets (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`), and `ALPACA_ACCOUNT_ID` as a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas).
+GitHub config: `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` are set correctly; `ALPACA_ACCOUNT_ID` is a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas). **`ANTHROPIC_API_KEY` exists but is EMPTY — fix before Monday, see below.**
+
+The workflow itself is proven end to end: a `workflow_dispatch` rehearsal ran green on the real runner Sat 29 Aug 11:15 ET (run `33259706303`, 46s) — checkout, Python 3.14, pinned Alpaca CLI 0.0.13, `assert_paper`, live broker reads, and a journal commit pushed to `main` as `theta-gate-agent[bot]`. Returned `ok: true`, `entry.attempted: false` (weekend, correctly short-circuited).
 
 Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,000, zero positions, zero orders, zero manual trades. **Never place a manual order on it** — its history is the judges' evidence the agent is autonomous.
 
@@ -27,22 +29,33 @@ Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,00
 
 ## Do this next
 
-**1. Rehearse the workflow on GitHub before Monday.** Everything so far was verified locally; the real runner (different OS, fresh CLI install, real secrets) has never executed a tick.
+**1. BLOCKER — `ANTHROPIC_API_KEY` is an empty secret.** The rehearsal's env dump showed `ALPACA_API_KEY: ***` and `ALPACA_SECRET_KEY: ***` (masked = populated) but `ANTHROPIC_API_KEY:` blank. Cause: it was set via `grep '^ANTHROPIC_API_KEY=' .env | ... | gh secret set`, and `.env` lines carry **leading whitespace**, so the `^` anchor matched nothing and an empty value was piped in. Left as-is, every Monday tick runs, proposes nothing, and journals `model_failure_or_malformed` — no crash, no trade, no obvious alarm.
+
+Fix interactively (no parsing, no anchor bug — paste the key at the prompt):
+
+```bash
+gh secret set ANTHROPIC_API_KEY --repo Kalwaleed/theta-gate
+```
+
+Then **re-run the rehearsal below and confirm the env dump shows `***`**. `gh secret list` cannot detect this — it lists the name and timestamp for an empty secret exactly as for a populated one. Only a real run proves it.
+
+**2. Re-run the workflow rehearsal to confirm the fix.**
 
 ```bash
 gh workflow run "Theta Gate Agent" --repo Kalwaleed/theta-gate -f dry_run=true
 gh run watch --repo Kalwaleed/theta-gate
+gh run view <run-id> --repo Kalwaleed/theta-gate --log | grep "ANTHROPIC_API_KEY:"
 ```
 
-Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. It still proves checkout, Python setup, CLI install, `assert_paper`, broker reads, and the journal commit+push. Expect `ok: true`, `entry.attempted: false`, and a new `journal:` commit authored by `theta-gate-agent[bot]`.
+Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. Expect `ok: true`, `entry.attempted: false`, a new `theta-gate-agent[bot]` journal commit, and `ANTHROPIC_API_KEY: ***`.
 
-**2. Monday during market hours — finish the gate verification (task #6).** Sunday's live check confirmed gates fire in the right order, but only up to `gate_delta_band`: on the weekend snapshot no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08, low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. A standalone read-only checker was used for this; rewrite it as needed — it wrote nothing and committed nothing:
+**3. Monday during market hours — finish the gate verification (task #6).** Sunday's live check confirmed gates fire in the right order, but only up to `gate_delta_band`: on the weekend snapshot no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08, low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. A standalone read-only checker was used for this; rewrite it as needed — it wrote nothing and committed nothing:
 
 ```
 /Users/papasmurf/.claude/jobs/94b00c5f/tmp/live_gate_check.py   # ephemeral, may be gone
 ```
 
-**3. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
+**4. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
 
 ---
 
@@ -53,7 +66,8 @@ Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry 
 - **GitHub secrets and variables are separate namespaces.** `secrets.ALPACA_ACCOUNT_ID` resolves to an empty string when the value is stored as a variable — silent, and it trips `assert_paper` on every scheduled run. Cost us a real blocker; fixed in `257ccdc`.
 - **`--dry-run` gates `submit_mleg` *and* `cancel_order`.** A cancel is a broker write, and an order under dry-run may be a *real* order adopted from an earlier live tick. Do not add a broker write that ignores the `dry_run` flag.
 - **Duplicate `client_order_id` is rejected with HTTP 422, never duplicated.** Verified live. This is the entire idempotency mechanism: recompute the *same* id on retry and look it up first. A random fallback id would silently defeat it.
-- **Sourcing `.env` prints `.env:7: command not found: EOF`.** Harmless, pre-existing; a stray heredoc marker in the file. Cosmetic only — but worth cleaning.
+- **`.env` lines carry leading whitespace, and the file has a stray heredoc marker.** Sourcing it prints `.env:7: command not found: EOF` (harmless). The whitespace is not harmless: `grep '^KEY='` silently matches nothing, which is how an empty `ANTHROPIC_API_KEY` reached GitHub. Prefer interactive `gh secret set` over piping from `.env`.
+- **`gh secret list` cannot tell an empty secret from a populated one.** Both show name + timestamp. The only reliable check is a workflow run: a populated secret renders as `***` in the log's env dump, an empty one renders blank.
 
 ---
 
