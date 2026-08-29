@@ -105,7 +105,13 @@ jobs:
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
-          ALPACA_ACCOUNT_ID: ${{ secrets.ALPACA_ACCOUNT_ID }}
+          # Configured in this repo as a VARIABLE, not a secret (confirmed
+          # via `gh variable list` 29 Aug 2026) -- an account id isn't
+          # sensitive on its own (no more than the account_number Alpaca's
+          # own dashboard shows openly), and `secrets.ALPACA_ACCOUNT_ID`
+          # would silently resolve to an empty string here, tripping
+          # assert_paper's "not set" check on every single tick.
+          ALPACA_ACCOUNT_ID: ${{ vars.ALPACA_ACCOUNT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Hardcoded on purpose, not secrets: this is the paper/live trap
           # documented in env.example ("THE TRAP"). Keeping both literal in
