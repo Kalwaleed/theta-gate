@@ -1,5 +1,12 @@
 # Theta Gate — Strategy and Implementation Plan, 28 Aug – 4 Sep 2026
 
+> **SUPERSEDED, 29 Aug 2026.** Written 28 Aug, before the canonical plan and before
+> `brain.py`/`loop.py` existed. Kept for its strategy derivation (Part I, and the research
+> it merges), which still holds. **Do not read Part II as a description of what was built.**
+> Two things in it are now wrong: §4.11 and §9's *critic* was cut, and the proposer does not
+> use a read-only MCP allowlist — it runs with no tools at all. `docs/PLAN.md` is the live
+> design doc; `docs/THETA_GATE_CANONICAL_PLAN.md` is the strategy/architecture authority.
+
 **Status:** the single operating document. Part I is what the agent trades. Part II is how it gets built, codified, and published this week. Every number in Part I is either already in `governance.json` or is added to it in §14. The agent trades what this file says and nothing else.
 
 **Sources merged here:**
