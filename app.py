@@ -370,7 +370,7 @@ def load(journal_mtime):
 
 
 def main():
-    st.set_page_config(page_title="Theta Gate", page_icon="?", layout="wide",
+    st.set_page_config(page_title="Theta Gate", page_icon="Θ", layout="wide",
                        initial_sidebar_state="collapsed")
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -379,8 +379,18 @@ def main():
     d = load(mtime)
     s, gov = d["summary"], d["gov"]
 
-    halted = Path("data/HALT.json").exists() and json.loads(
-        Path("data/HALT.json").read_text(encoding="utf-8")).get("active")
+    # A corrupt or half-written HALT.json must not take the page down: the
+    # file is rewritten by loop.py mid-tick and read here from a separate
+    # process, so a torn read is reachable in normal operation. Unreadable
+    # is treated as halted -- same fail-closed rule loop.py._check_halt
+    # uses, and the safer way to be wrong in front of judges.
+    halted = False
+    halt_file = Path("data/HALT.json")
+    if halt_file.exists():
+        try:
+            halted = bool(json.loads(halt_file.read_text(encoding="utf-8")).get("active"))
+        except (OSError, ValueError):
+            halted = True
     ok = s["chain_intact"] and not halted
     status = "halted" if halted else ("history verified" if s["chain_intact"] else "chain broken")
 

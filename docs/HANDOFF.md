@@ -1,6 +1,6 @@
 # Handoff — Theta Gate
 
-**Written Sat 29 Aug 2026, 11:40 ET** — after the GitHub Actions rehearsal ran green on the real runner with all three secrets verified populated. `main` is pushed and in sync with `origin`; 45/45 tests pass. **No blockers remain for Monday's first live session.** Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Written Sat 29 Aug 2026, 11:40 ET** — after the GitHub Actions rehearsal ran green on the real runner with all three secrets verified populated. `main` is pushed and in sync with `origin`; 96/96 tests pass (the team merged PRs #1/#3/#4/#5 — `store.py`, `app.py` and doc corrections — on top). **No blockers remain for Monday's first live session.** Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts. **Verify state rather than trusting this file** (`git log --oneline -5`, `pytest -q`); if it disagrees with the repo, the repo is right. Commit hashes are deliberately not quoted as "current" here — they go stale the moment anything else lands, `journal:` commits from the agent itself included.
 
@@ -8,7 +8,7 @@ Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CA
 
 ## Where things stand
 
-Every file in the trading path is built, tested, and committed. **45/45 tests pass** (`pytest -q`, Python 3.14.6 in `.venv`).
+Every file in the trading path is built, tested, and committed. **96/96 tests pass** (`pytest -q`, Python 3.14.6 in `.venv`).
 
 | Component | State |
 |---|---|
@@ -17,7 +17,8 @@ Every file in the trading path is built, tested, and committed. **45/45 tests pa
 | `.github/workflows/agent.yml` | Built; cron every 5 min, weekdays, 09:30–16:00 ET |
 | `governance.json`, event calendar | Built |
 | `scripts/live_gate_check.py` | Built; read-only diagnostic, mirrors the entry pipeline |
-| `app.py` (Streamlit dashboard) | **Not built** — Tuesday, does not block trading |
+| `store.py` (SQLite read model) | Built (PR #1); derived from the journal, gitignored, no trading-path coupling |
+| `app.py` (Streamlit dashboard) | Built (PR #5); read-only, no credentials. **Not yet deployed** — the hosted URL is a hard submission gate |
 | `README.md` write-up for judges | **Not built** — Thursday, needs real trading history |
 
 GitHub config is complete and **verified by a real run**: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` and `ANTHROPIC_API_KEY` all render as `***` (masked = populated) in run `33260744206`'s env dump; `ALPACA_ACCOUNT_ID` is a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas).
@@ -51,7 +52,9 @@ PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py
 
 It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but is strictly read-only — no journal writes, no git, no order submission. It *does* make one real `brain.propose()` call, so it costs an Anthropic API call per run.
 
-**3. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
+**3. Deploy the dashboard to Streamlit Community Cloud.** `app.py` is merged but not hosted, and the demo URL is a hard submission gate — no URL, entry not judged. Two things to know before it goes public: `.streamlit/config.toml` now sets `showErrorDetails = "none"` (the repo is private, the URL will not be — don't remove it), and `store.connect()`/`rebuild()` has no locking, so confirm several simultaneous cold loads don't race on the SQLite rebuild before handing the link to judges.
+
+**4. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
 
 ---
 

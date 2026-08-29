@@ -20,3 +20,13 @@ headless = true
 [browser]
 # Never phone home from the judges' demo URL.
 gatherUsageStats = false
+
+[client]
+# Streamlit's default is "full", which renders the exception type, message
+# and server-side file paths straight into the page. The repo is private;
+# the demo URL is not -- so an uncaught error would show an anonymous
+# visitor more of the host than it should, and would look broken in front
+# of judges either way. app.py's two unguarded reads (governance.json,
+# data/HALT.json) are the realistic trigger: a transient checkout race on
+# the host is enough.
+showErrorDetails = "none"
