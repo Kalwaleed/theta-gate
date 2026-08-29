@@ -27,6 +27,23 @@ The final submission is made from **Khaled's (`Kalwaleed`) lablab.ai account** �
 
 ---
 
+## Strategy/architecture authority — and Scoped V1's deliberate deviations
+
+**[`docs/THETA_GATE_CANONICAL_PLAN.md`](THETA_GATE_CANONICAL_PLAN.md)** is the strategy and architecture reference — trading spec (§4), gate ordering (§6), exit arithmetic (§8), the LLM boundary (§9). This file mirrors its execution-relevant detail for day-to-day work.
+
+That document also specs a production-grade control system — Postgres with row-level security and 6 credentialed database roles, GitHub OIDC/Sigstore/Fulcio/Rekor release attestation, immutable-tag release promotion with a separate offline break-glass descriptor, fenced distributed leases, hash-chained event sourcing, a no-bypass branch-freeze ruleset, and a test suite requiring concurrent-runner race-condition canaries. Reviewed 29 Aug 2026: that's realistically weeks of distributed-systems engineering, not achievable before Monday 31 Aug's first trading window (its own Phase 2 deadline — the entire Postgres/lease layer — was due the day it was reviewed).
+
+**We are building Scoped V1 instead** — every real correctness fix from the canonical doc's §2 "material corrections" and §4-9 trading spec, none of the control-plane/attestation/chaos-test infrastructure. This is a disclosed, deliberate scope cut, not an oversight:
+
+- **Idempotency** comes from the broker, not a database: a deterministic (non-random) `client_order_id` per order, always looked up before submitting. Verified live 29 Aug 2026 — Alpaca rejects a resubmitted duplicate id with 422 `client_order_id must be unique` rather than creating a second order, which is the fact this whole mechanism leans on.
+- **Concurrency** is one GitHub Actions `concurrency:` group (`cancel-in-progress: false`) — a platform feature, not custom infra.
+- **Journal** is an append-only local JSONL, written incrementally (intent before every broker call, outcome after — not batched at tick end), git-committed.
+- **HALT** is a local flag file, checked at tick start.
+
+No Postgres/RLS, no OIDC/Sigstore attestation, no immutable-tag promotion, no branch-freeze ruleset, no chaos/race test suite, no 5-way workflow split — one `.github/workflows/agent.yml`.
+
+---
+
 ## The one idea
 
 **The LLM has read-only tools. Every write goes through deterministic Python.**
@@ -115,35 +132,43 @@ Bonus: the MCP server ships `search_alpaca_docs` / `get_alpaca_endpoint_docs` as
 
 **Sep 4 is the first Friday of the month — Non-Farm Payrolls at 08:30 ET, ninety minutes before the deadline.** VERIFIED against the BLS release calendar. A force-close into an NFP gap leaves no room to react.
 
-**No new entries after Wed Sep 2, 16:00 ET. All positions closed Thu Sep 3 via an escalation ladder. Fri Sep 4 monitor-only.** Costs a day of P&L, buys a settled, honest, judgeable number.
+**No new entries after Wed Sep 2, 10:45 ET (Wednesday is morning-only — see the risk-guard table below). All positions closed Thu Sep 3 via an escalation ladder starting 14:30 ET. Fri Sep 4 monitor-only.** Costs a day of P&L, buys a settled, honest, judgeable number.
 
 ---
 
 ## Risk guard
 
-Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 16 passing tests in `test_agent.py`.
+Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 30 passing tests in `test_agent.py`.
+
+`resolve_direction(proposal_direction)` runs before any of this, before a chain is even fetched — a bearish proposal is `NO_TRADE`, never a call-side substitution (canonical plan §6.1, `HARD_SAFETY`). Everything below assumes a `bull_put` plan already exists.
 
 | Gate | Rule |
 |---|---|
 | `gate_paper_env` | Assert paper before **every** order path. Adopted from Alpaca's own 25 Aug commit. |
 | `gate_kill_switch` | A `HALT` file rejects everything except closes. `touch HALT` is the human override. |
 | `gate_account_ready` | Account status ∈ {ACTIVE, PAPER_ONLY}, not `trading_blocked`, effective options level ≥ 3 (the *minimum* of approved and configured max, not just approved). |
+| `gate_vix_zone` | **Added, canonical plan.** VIX < 30 and VIX9D < VIX3M (contango). Entry-only — never blocks exits or liquidates an open position. |
+| `gate_intraday_shock` | **Added, canonical plan.** \|intraday move\| < 2%. Entry-only, same as above. |
+| `gate_event_blackout` | **Added, canonical plan.** Blocks entries around FOMC/CPI/PCE/NFP (Tier 1) and ISM/ADP/jobless claims (Tier 2), per the hand-verified `data/events_2026-08-31_2026-09-04.json`. A missing calendar fails closed. |
 | `gate_greeks_present` | Both legs need non-null delta **and** IV. The 0DTE guard — structural, not a date check. |
-| `gate_dte_window` | 4 ≤ DTE ≤ 9, expiry ≠ today, entry before 15:00 ET. |
+| `gate_dte_window` | **6 ≤ DTE ≤ 9** (narrowed from 4–9, canonical plan), expiry ≠ today. |
 | `gate_delta_band` | Short leg 0.16 ≤ \|delta\| ≤ 0.25. |
-| `gate_credit_quality` | **Recalibrated.** Reject if credit/width deviates more than ±40% from `0.8 × short_delta`. Catches a bad quote without vetoing the strategy — see the live-probe corrections below. |
-| `gate_minimum_credit` | **Added, Fable 5 review.** Absolute floor: credit ≥ 10% of width. `gate_credit_quality`'s own tolerance can pass a technically-in-band trade too thin to be worth the execution risk — this catches that case. |
-| `gate_quote_sanity` | Per leg: bid > 0, ask > bid, spread ≤ 15% of mid. |
-| `gate_vrp_present` | ATM IV ≥ 20-day realised vol. Operationalises the one edge this strategy claims — sell premium only when it's actually rich. |
-| `gate_max_loss_per_trade` | Sized on **max loss**, never premium. `(width − credit) × 100 × qty ≤ $1,000`. |
+| `gate_credit_quality` | Reject if credit/width deviates more than ±40% from `0.8 × short_delta`. Catches a bad quote without vetoing the strategy — see the live-probe corrections below. |
+| `gate_minimum_credit` | Absolute floor: credit ≥ 10% of width. `gate_credit_quality`'s own tolerance can pass a technically-in-band trade too thin to be worth the execution risk — this catches that case. |
+| `gate_quote_sanity` | Per leg: bid > 0, ask > bid, spread ≤ 15% of mid, **quote age ≤ 60s (canonical plan; was unenforced dead config).** |
+| `gate_vrp_present` | **Tightened, canonical plan.** ATM IV − 20-day realised vol ≥ 2.0 vol points (was a plain IV ≥ RV check). Operationalises the one edge this strategy claims — sell premium only when it's actually rich, not just barely above noise. |
+| `gate_max_loss_per_trade` | `(width − credit) × 100 × qty ≤ $1,000`. Sizing itself is now fixed at exactly 1 contract (canonical plan §2.12) — this gate is a safety check, not a scaling formula. |
 | `gate_total_open_risk` | Open + proposed ≤ $3,000. |
-| `gate_concurrent` | ≤ 3 open, ≤ 1 per underlying, ≤ 2 new entries per session — prevents revenge-doubling. |
+| `gate_concurrent` | **≤ 2 open** (narrowed from 3, canonical plan — SPY and QQQ are one correlated bucket), ≤ 1 per underlying, ≤ 2 new entries per session. |
+| `gate_daily_fill_cap_per_underlying` | **Added, canonical plan.** A filled entry earlier today blocks a same-underlying re-entry later today, even if that spread already closed. |
 | `gate_buying_power_floor` | Post-trade options BP ≥ $25,000 **and** ≥ 5 × max loss. Margin required is `width × 100 × qty` (verified live — NOT max loss). |
-| `gate_daily_drawdown` | −2% from session-start → no new entries today. |
-| `gate_cumulative_drawdown` | Equity ≤ $96,000 → **write `HALT`, then close each position individually by explicit order.** Never a bulk endpoint. Also fires on `trading_blocked` or three consecutive loop exceptions. |
-| `gate_deadline` | Opens blocked after Wed Sep 2, 16:00 ET. From Thu Sep 3, 15:00 ET, exits escalate: limit at mid → 15:30 cross the spread → 15:50 market `mleg`. |
+| `gate_daily_drawdown` | **−1%** from session-start (tightened from −2%, canonical plan) → no new entries today. |
+| `gate_cumulative_drawdown` | Equity ≤ **$98,000** (tightened from $96,000, canonical plan) → **write `HALT`, then close each position individually by explicit order.** Never a bulk endpoint. Also fires on `trading_blocked` or three consecutive loop exceptions. |
+| `gate_deadline` | Opens blocked after Wed Sep 2, **10:45 ET** (was wrongly 16:00 — Wednesday is morning-only, canonical plan §4.3: a spread needs runway before Thursday's flatten to cover its own bid-ask). From Thu Sep 3, **14:30 ET**, exits escalate: limit at mid → 15:00 cross the spread → 15:30 market `mleg` → 15:45 reconcile and alert (moved 30 min earlier across the board — the old ladder's forceful rung landed 10 minutes before the close). |
 
 **Partial-fill unwind:** poll order status after submit; not fully filled in 60s → cancel remainder, flatten any orphan leg via an explicit order, then **recompute open risk from actual filled quantity.** This protects the entire "defined risk" claim and is the most important code in the repo.
+
+**Idempotency:** every order gets a deterministic (non-random) `client_order_id` — `spread.client_order_id()` — computed from date/window/underlying/stage, always looked up (`alpaca.get_order_by_client_id`) before submitting. Verified live 29 Aug 2026: Alpaca rejects a resubmitted duplicate id with 422 `client_order_id must be unique` rather than creating a second order, which is what makes a crash-and-retry safe without a database — see [Strategy/architecture authority](#strategyarchitecture-authority--and-scoped-v1s-deliberate-deviations) above.
 
 ### Corrections from the live probe, 26 Aug 2026
 
@@ -165,12 +190,12 @@ This is the honest thesis: the agent does not claim to predict the market. It ha
 
 Claude Fable 5 independently reviewed the final design (2-leg vertical, live-probe corrections included) as a second opinion before Monday's build. Scored **8/10** — Technology Implementation 9, Presentation & Execution 9, Creativity & Originality 8, P&L Performance 5 ("a coin flip weighted slightly your way by the credit floor and VRP gate; six sessions is noise, the design controls the left tail, not the sign"). Biggest named risk: a correlated SPY/QQQ down-move trips 2x-credit stops on multiple positions the same day — the drawdown gates cap the damage, not the sign of the week.
 
-Five recommendations, two implemented today, three deferred to Monday's `brain.py`/`loop.py` build:
+Five recommendations, two implemented same-day, three deferred to Monday's `brain.py`/`loop.py` build. **Status as of the 29 Aug canonical-plan review:**
 
 - **Implemented:** `gate_minimum_credit` — 10%-of-width absolute credit floor (table above).
-- **Implemented:** DTE preference — `dte_preferred_max: 6` in `governance.json`. `gate_dte_window` still hard-enforces 4–9; this is a *query-order* preference for `loop.py`'s expiration selection, biasing toward 4-6 DTE (more theta captured before Thursday's flatten) and falling back to 7-9 only when no strike in the delta band exists there.
+- **Superseded, not implemented:** the original DTE-preference recommendation (`dte_preferred_max: 6`, biasing toward 4-6 DTE) is gone. The canonical plan's own costed argument runs the other way — a 4-DTE spread entered Monday hits the 2-DTE time exit Wednesday and pays two bid-asks for two days of theta, while a 7–9 DTE spread held to Thursday's flatten never touches the time exit. `gate_dte_window` now hard-enforces **6–9**, and `loop.py` will enumerate every eligible expiry in that range and rank candidates (lowest quote friction → delta closest to 0.20 → largest DTE) rather than preferring one DTE over another.
 - **Deferred — order-pricing discipline:** walk the limit price toward the NBBO mid over the poll window instead of a single static quote, to reduce the vig cost the live probe measured (~$7 round trip). Belongs in `loop.py`'s submission logic, not `risk.py` — it's an execution tactic, not a gate.
-- **Deferred — legged-condor neutral mode:** when the LLM's directional conviction is low, submit two independent verticals (a bull put + a bear call) instead of forcing a directional pick. Requires the `Proposal` schema to carry a "neutral" direction that triggers two 2-leg orders, and `gate_concurrent` to treat the linked pair correctly for exposure without breaking the existing 1-per-underlying cap. A `brain.py`/`loop.py`-level feature, not a `risk.py` change.
+- **Killed, not deferred — legged-condor neutral mode:** the canonical plan is explicit (§4.7, `HARD_SAFETY`): *"Never both sides on the same underlying — that is a condor by another name."* A neutral proposal now just resolves to the same put credit spread as bullish (`resolve_direction`, above) — no second leg pair, no linked-exposure accounting needed in `gate_concurrent`.
 - **Deferred — sharpened partial-fill repair:** on a partial fill, actively close the exposed leg immediately with its own order rather than cancel-and-wait for the 60s timeout. Tightens the existing partial-fill unwind; implement alongside `loop.py`'s order-submission logic Monday.
 
 ---
@@ -219,16 +244,18 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 
 | File | Contents | Status |
 |---|---|---|
-| `alpaca.py` | CLI subprocess wrapper, paper asserted at every call | ✅ built |
-| `spread.py` | Strike selection + mleg body construction. Pure. | ✅ built |
-| `risk.py` | The gates + `check_all()` + `exit_signal()`. Stdlib only. | ✅ built |
-| `test_agent.py` | 16 tests, fixtures from the real 26 Aug chain | ✅ built, all passing |
+| `alpaca.py` | CLI subprocess wrapper, paper asserted at every call, one `ALPACA_PROFILE`-env-var mechanism | ✅ built |
+| `spread.py` | Strike selection + mleg body construction + deterministic `client_order_id`. Pure. | ✅ built |
+| `risk.py` | The gates (18 state-only + 3 sized) + `check_all()` + `exit_signal()` + `resolve_direction()`. Stdlib only. | ✅ built |
+| `test_agent.py` | 30 tests, fixtures from the real 26 Aug chain | ✅ built, all passing |
 | `governance.json` | Every risk number, one place | ✅ built |
-| `brain.py` | The two LLM calls, read-only MCP allowlist, fail-closed validator | not yet — Monday |
-| `loop.py` | One tick: clock → orphan → exits → entry → journal | not yet — Monday |
-| `app.py` | Streamlit dashboard | not yet — Tuesday |
-| `.github/workflows/agent.yml` | The cron + `workflow_dispatch` | not yet |
-| `env.example` | Documents the inverted `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE` trap | ✅ built |
+| `data/events_2026-08-31_2026-09-04.json` | Hand-verified FOMC/CPI/PCE/NFP/ISM/ADP/jobless-claims calendar for the trading week, sourced live against federalreserve.gov/bls.gov/ismworld.org/adpemploymentreport.com | ✅ built |
+| `market.py` | State builder: bars → RV20, Cboe VIX-family CSV, chain, intraday move | not yet — today/tomorrow |
+| `brain.py` | The one bounded proposer call, read-only, scrubbed env, fail-closed validator | not yet — today/tomorrow |
+| `loop.py` | One tick: recovery/reconcile → exits → entry window → journal (the largest remaining piece) | not yet — today/tomorrow |
+| `app.py` | Streamlit dashboard | not yet — deprioritized behind the trading loop |
+| `.github/workflows/agent.yml` | One workflow: cron + `workflow_dispatch` + one `concurrency:` group | not yet — Sunday |
+| `env.example` | Documents the inverted `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE` trap, and `ALPACA_ACCOUNT_ID` (now required for `assert_paper` on the submission profile) | ✅ built |
 | `README.md` | The one-page write-up deliverable | not yet — Thursday |
 | `docs/diagrams/*.html` | Architecture, sequence, flowchart — KBW skin | ✅ built |
 | `social/drafts/` | Post drafts, PK posts manually from `@khaledalwaleed` | ✅ built, post 01 live |
@@ -254,10 +281,12 @@ Deployed from the repo, auto-redeploying on each push. **Primary view is history
 
 **Fri 28 Aug from 11:00 ET** — create the **fresh submission** paper account, confirm $100,000, record the ID. **No manual orders on it, ever** — its history must be 100% agent-generated, because that history is what judges read as "autonomous." `alpaca.py` + first tests: done. Save a live chain snapshot as the test fixture: done.
 
-**Sat–Sun 29–30 Aug** — market shut, commits still count. `spread.py` + `risk.py` + the full test file: **done**. Author the options skill for the upstream PR.
+**Sat 29 Aug** — market shut, commits still count. Empirically verified the core idempotency assumption live (a resubmitted duplicate `client_order_id` gets rejected, not duplicated) on the throwaway profile. Canonical-plan correctness fixes landed: `governance.json` + `risk.py` + `spread.py` + `alpaca.py` + the full test file — **done, 30/30 passing**. `market.py` + `brain.py` + `loop.py` next (`loop.py` is the largest remaining piece).
 
-**Mon 31 Aug** — `brain.py` + `loop.py`. First autonomous cycle, first real spread.
-**Tue 1 Sep** — `app.py`, deploy, verify the URL cold from outside.
+**Sun 30 Aug** — `.github/workflows/agent.yml`; full `--dry-run` rehearsal; a live-gate sanity check (real SPY/QQQ chain + VIX data through the full gate stack, pass rate reviewed rather than assumed — over ~4 real entry windows this week, not 5, an ISM Manufacturing PMI release blacks out Tuesday morning). The upstream options-spreads skill PR stays deprioritized behind all of this, per the canonical plan's own priority call.
+
+**Mon 31 Aug** — First autonomous cycle, first real spread (exactly 1 contract).
+**Tue 1 Sep** — `app.py` if time remains, deploy, verify the URL cold from outside.
 **Wed 2 Sep** — fix what live trading broke. **Last day for new entries.**
 **Thu 3 Sep** — flatten via the escalation ladder. Media block: diagrams → deck → record → cut → write-up. `/security-review` before the repo goes public.
 **Fri 4 Sep** — monitor-only. Final push. Submit before 11:00 ET.

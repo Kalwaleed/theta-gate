@@ -1,0 +1,51 @@
+{
+  "window": {"start": "2026-08-31", "end": "2026-09-04"},
+  "retrieved_at": "2026-08-29T09:57:00Z",
+  "reviewer": "claude-code-research-fork",
+  "note": "Tier definitions per docs/THETA_GATE_CANONICAL_PLAN.md section 4.4. Tier 1 = FOMC decision/press conference, CPI, PCE inflation, Non-Farm Payrolls. Tier 2 = ISM, ADP, jobless claims. Checked and confirmed NOT falling in this window (all from primary sources, so omitted from events[]): FOMC (next meeting Sep 15-16, 2026, per federalreserve.gov), CPI for August 2026 data (releases Sep 11, 2026, per bls.gov September 2026 schedule), PCE / Personal Income and Outlays for August 2026 data (releases Sep 30, 2026, per bea.gov). All times below are ET (EDT, UTC-4) since DST is in effect through early November. JOLTS (Sep 1), Metropolitan Area Employment and Unemployment (Sep 2), and Productivity and Costs (Sep 3) also appear on the BLS September 2026 calendar but are not in either tier per the canonical doc's own definitions, so they are excluded here rather than added as a third category.",
+  "source_urls": [
+    "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    "https://www.bls.gov/schedule/news_release/empsit.htm",
+    "https://www.bls.gov/schedule/2026/09_sched.htm",
+    "https://www.bea.gov/news/schedule",
+    "https://www.bea.gov/news/2026/personal-income-and-outlays-july-2026",
+    "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/",
+    "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-55-6-july-2026-ism-manufacturing-pmi-report-302840669.html",
+    "https://adpemploymentreport.com/",
+    "https://mediacenter.adp.com/2026-08-05-ADP-National-Employment-Report-Private-Sector-Employment-Increased-by-44,000-Jobs-in-July-Annual-Pay-was-Up-4-4",
+    "https://fred.stlouisfed.org/releases/calendar?od=asc&rid=194&ve=2023-12-31&view=year&vs=2023-01-01",
+    "https://oui.doleta.gov/unemploy/claims_arch.asp"
+  ],
+  "events": [
+    {
+      "class": "tier2",
+      "name": "ISM Manufacturing PMI, August 2026 data",
+      "event_ts_et": "2026-09-01T10:00:00-04:00",
+      "source_url": "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/"
+    },
+    {
+      "class": "tier2",
+      "name": "ADP National Employment Report, August 2026 data",
+      "event_ts_et": "2026-09-02T08:15:00-04:00",
+      "source_url": "https://adpemploymentreport.com/"
+    },
+    {
+      "class": "tier2",
+      "name": "Initial Jobless Claims, week ending 2026-08-29 (standing weekly Thursday 8:30 AM ET schedule per oui.doleta.gov, applied to this window's Thursday)",
+      "event_ts_et": "2026-09-03T08:30:00-04:00",
+      "source_url": "https://oui.doleta.gov/unemploy/claims_arch.asp"
+    },
+    {
+      "class": "tier2",
+      "name": "ISM Services PMI, August 2026 data",
+      "event_ts_et": "2026-09-03T10:00:00-04:00",
+      "source_url": "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/"
+    },
+    {
+      "class": "tier1",
+      "name": "Employment Situation (Non-Farm Payrolls), August 2026 data",
+      "event_ts_et": "2026-09-04T08:30:00-04:00",
+      "source_url": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    }
+  ]
+}
