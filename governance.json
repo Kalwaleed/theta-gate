@@ -6,62 +6,80 @@
     "structure": "vertical",
     "legs": 2,
     "width_dollars": 5,
-    "dte_min": 4,
+    "dte_min": 6,
     "dte_max": 9,
-    "_dte_preference_comment": "Fable 5 strategy review, 28 Aug 2026: bias expiration selection to 4-6 DTE, falling back to 7-9 only when no strike in the delta band exists there. Rationale: flatten is Thu 3 Sep, so a 9-DTE spread entered Wednesday captures almost no theta before forced close. This is a QUERY-ORDER preference for loop.py (not yet built), not a rejection bound — gate_dte_window still enforces the hard 4-9 range regardless of preference.",
-    "dte_preferred_max": 6,
+    "_dte_comment": "Canonical plan (docs/THETA_GATE_CANONICAL_PLAN.md) 2 & Sec 4.1, 29 Aug 2026: narrowed from 4-9 to 6-9 and dropped the old dte_preferred_max query-order preference. With flatten on Thu 3 Sep, a 4-DTE spread entered Monday hits the 2-DTE time exit Wednesday and pays two bid-asks for two days of theta; loop.py enumerates every eligible expiry in [6,9] and ranks candidates instead of preferring one DTE over another.",
     "short_delta_min": 0.16,
     "short_delta_max": 0.25,
     "_credit_quality_comment": "Verified live 26 Aug 2026: credit/width is NOT a fixed 0.20-0.45 band. It tracks ~0.8 x short_delta and falls as width increases (5-wide 0.120 -> 25-wide 0.056). This gate catches a bad quote relative to that curve, not an absolute ratio.",
     "credit_quality_expected_ratio": 0.8,
     "credit_quality_max_deviation": 0.40,
     "_min_credit_comment": "Fable 5 strategy review, 28 Aug 2026: an absolute floor, separate from the relative credit_quality check above. At the low end of the delta band (0.16) with the relative check's own -40% tolerance, credit can fall to ~$0.38 on a $5 spread and still pass the relative test -- too thin to be worth the mechanical and execution risk. This gate catches that case.",
-    "min_credit_pct_of_width": 0.10
+    "min_credit_pct_of_width": 0.10,
+    "_fixed_quantity_comment": "Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the entire hackathon, not just the first trade. A 5-session sample cannot justify scaling; size_position() no longer computes qty from a max-loss budget.",
+    "fixed_quantity": 1
   },
 
   "entry": {
     "windows_et": ["10:30", "13:30"],
     "max_new_entries_per_session": 2,
     "no_entries_after_date": "2026-09-02",
-    "no_entries_after_time_et": "16:00",
-    "_deadline_comment": "Sep 4 is NFP day, 08:30 ET, 90 min before the 11:00 ET submission deadline (verified against bls.gov). Flatten Thursday, not Friday."
+    "no_entries_after_time_et": "10:45",
+    "_deadline_comment": "Canonical plan Sec 4.3, 29 Aug 2026: Wednesday is morning-only (the afternoon window is dropped — a spread needs enough runway before Thursday's flatten to cover its own bid-ask round trip). This value previously read 16:00, which wrongly left the Wednesday afternoon window open. Sep 4 is NFP day, 08:30 ET, verified against bls.gov this session (data/events_2026-08-31_2026-09-04.json) and falls after Thursday's flatten, so it does not block any entry.",
+    "event_calendar_path": "data/events_2026-08-31_2026-09-04.json"
   },
 
   "exit": {
     "take_profit_pct_of_credit": 0.50,
-    "stop_loss_multiple_of_credit": 2.0,
+    "stop_close_debit_multiple": 2.0,
+    "_stop_comment": "Renamed from stop_loss_multiple_of_credit (canonical plan Sec 2.1, 29 Aug 2026): the multiple applies to the CLOSING DEBIT, not the loss. At credit=$0.60, this multiple gives a $1.20 closing debit and a $0.60 loss (1x credit), not a $1.20 loss. exit_signal()'s arithmetic was already correct — only the name was misleading.",
     "time_exit_dte": 2,
     "force_close_start_date": "2026-09-03",
-    "force_close_start_time_et": "15:00",
+    "force_close_start_time_et": "14:30",
+    "_force_close_comment": "Canonical plan Sec 8.2, 29 Aug 2026: ladder moved 30 min earlier across the board. The old ladder's forceful rung landed at 15:50, ten minutes before the 16:00 close, with no recovery time if it failed.",
     "force_close_ladder": [
-      {"at_et": "15:00", "action": "limit_at_mid"},
-      {"at_et": "15:30", "action": "cross_the_spread"},
-      {"at_et": "15:50", "action": "market_mleg"}
+      {"at_et": "14:30", "action": "limit_at_mid"},
+      {"at_et": "15:00", "action": "cross_the_spread"},
+      {"at_et": "15:30", "action": "market_mleg"},
+      {"at_et": "15:45", "action": "reconcile_and_alert"}
     ]
   },
 
   "risk": {
     "max_loss_per_trade_dollars": 1000,
     "max_total_open_risk_dollars": 3000,
-    "max_concurrent_positions": 3,
+    "max_concurrent_positions": 2,
+    "_max_concurrent_comment": "Canonical plan, 29 Aug 2026: 3 -> 2. SPY and QQQ are one correlated bucket. With width fixed at $5 and quantity fixed at 1, this caps total margin reserve at $1,000 arithmetically -- no separate dollar-reserve gate needed.",
     "max_positions_per_underlying": 1,
+    "max_filled_entries_per_underlying_per_session": 1,
+    "_daily_fill_cap_comment": "Canonical plan Sec 4.5, 29 Aug 2026: a morning fill blocks an afternoon re-entry in the same underlying even if that morning spread already closed.",
     "options_buying_power_floor_dollars": 25000,
     "options_buying_power_floor_multiple_of_max_loss": 5,
-    "daily_drawdown_halt_pct": -0.02,
-    "cumulative_drawdown_halt_equity_dollars": 96000,
+    "daily_drawdown_halt_pct": -0.01,
+    "cumulative_drawdown_halt_equity_dollars": 98000,
     "starting_equity_dollars": 100000
   },
 
   "quote_sanity": {
     "min_bid_dollars": 0.01,
     "max_spread_pct_of_mid": 0.15,
-    "max_quote_age_seconds": 600
+    "max_quote_age_seconds": 60
+  },
+
+  "regime": {
+    "_comment": "Canonical plan Sec 4.6, 29 Aug 2026: entry-only regime filters, sourced from Cboe's public VIX-family CSVs. Never blocks exits or liquidates an open position -- a spike blocks NEW entries only.",
+    "vix_source_url_template": "https://cdn.cboe.com/api/global/us_indices/daily_prices/{symbol}_History.csv",
+    "vix_max_exclusive": 30.0,
+    "require_vix9d_lt_vix3m": true,
+    "intraday_move_abs_max_exclusive": 0.020
   },
 
   "vrp": {
     "_comment": "The only edge this strategy claims. Verified live: a fairly priced chain has zero arithmetic edge, negative by exactly the bid-ask cost. Sell premium only when it is actually rich.",
     "realised_vol_lookback_days": 20,
-    "require_atm_iv_gte_realised_vol": true
+    "require_atm_iv_gte_realised_vol": true,
+    "_min_vrp_points_comment": "Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check to a 2.0-vol-point margin -- IV barely above RV is noise, not a priced premium.",
+    "min_vrp_points": 2.0
   },
 
   "environment": {

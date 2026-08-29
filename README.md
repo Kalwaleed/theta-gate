@@ -4,11 +4,11 @@ An autonomous options-trading agent for the [Alpaca AI Trading Agents Hackathon]
 
 **The one idea:** the LLM has read-only tools. Every write goes through deterministic Python. A proposer suggests a direction; it never picks a strike, sizes a position, or holds an order credential. A pure-Python risk guard has final say and cannot be argued with — the breach is not reachable, not merely forbidden.
 
-This file is the getting-started guide and team workflow note. The full design doc — architecture, every risk gate, the corrections from live testing, the timeline — lives at **[`docs/PLAN.md`](docs/PLAN.md)**. Read that before touching `risk.py` or `spread.py`. The final one-page write-up for judging gets built here on Thursday, once there's real trading history to report.
+This file is the getting-started guide and team workflow note. The full design doc — architecture, every risk gate, the corrections from live testing, the timeline — lives at **[`docs/PLAN.md`](docs/PLAN.md)**. Read that before touching `risk.py` or `spread.py`. Strategy/architecture authority is **[`docs/THETA_GATE_CANONICAL_PLAN.md`](docs/THETA_GATE_CANONICAL_PLAN.md)** — see `docs/PLAN.md` for which parts of it we build (Scoped V1) and which we deliberately don't (a Postgres/OIDC control-plane, sized for a production system rather than a 5-day paper demo). The final one-page write-up for judging gets built here on Thursday, once there's real trading history to report.
 
 ## Status
 
-Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `governance.json`, `test_agent.py` (16/16). Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `brain.py`, `loop.py`, `app.py`, the GitHub Actions workflow. See the Repo layout table in `docs/PLAN.md` for the live checklist.
+Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `governance.json`, `test_agent.py` (30/30), `data/events_2026-08-31_2026-09-04.json`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `market.py`, `brain.py`, `loop.py`, `app.py`, the GitHub Actions workflow. See the Repo layout table in `docs/PLAN.md` for the live checklist.
 
 ## Quick start
 
@@ -17,10 +17,10 @@ git clone https://github.com/Kalwaleed/theta-gate.git
 cd theta-gate
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q                          # 15 passed
+pytest -q                          # 30 passed
 ```
 
-You'll also want the Alpaca CLI (`brew install alpacahq/tap/cli`) and your own paper API keys in a local `.env` (copy `env.example` — see the trap documented inside it before you touch `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE`).
+You'll also want the Alpaca CLI (`brew install alpacahq/tap/cli`) and your own paper API keys in a local `.env` (copy `env.example` — see the trap documented inside it before you touch `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE`). `ALPACA_ACCOUNT_ID` is now a hard requirement, not just documentation for judges — `alpaca.assert_paper()` refuses to trade the `submission` profile at all unless it's set and matches the live account, closing a gap where a config mistake could silently point `submission` at the wrong paper account.
 
 **Never run write commands against the submission account.** Its trade history is what judges read as "autonomous" — a manual order on it, even a test, undermines that claim. If you need to poke at the live API, use your own throwaway paper account.
 

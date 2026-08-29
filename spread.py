@@ -9,6 +9,7 @@ deterministic.
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class Contract:
     iv: float | None
     bid: float
     ask: float
+    quote_ts: float | None = None  # unix seconds, from the chain snapshot's latestQuote.t
 
     @property
     def mid(self):
@@ -57,8 +59,21 @@ def parse_chain(raw_snapshots: dict) -> list[Contract]:
             iv=snap.get("impliedVolatility"),
             bid=bid,
             ask=ask,
+            quote_ts=_parse_quote_ts(quote.get("t")),
         ))
     return contracts
+
+
+def _parse_quote_ts(raw: str | None) -> float | None:
+    """latestQuote.t is an RFC3339 UTC string with sub-microsecond precision
+    (e.g. '2026-08-28T19:59:56.711359584Z') — verified live 29 Aug 2026.
+    Python's fromisoformat truncates the extra digits rather than erroring."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _strike_from_occ(symbol: str) -> float:
@@ -120,6 +135,28 @@ def pick_spread(
         qty=0,           # sized by risk.size_position, not here
         max_loss_dollars=round((width - credit) * 100, 2),
     )
+
+
+def client_order_id(purpose: str, trade_date: str, window: str, underlying: str, stage: str) -> str:
+    """Deterministic and readable, e.g. 'tg-e-20260831-1030-spy-s0'. No HMAC
+    or randomness — order volume here is tiny and non-adversarial, so plain
+    determinism is enough for uniqueness. This *is* the idempotency
+    mechanism: a crashed-and-retried tick recomputes the same id and looks
+    it up (alpaca.get_order_by_client_id) before ever submitting again.
+    Verified live 29 Aug 2026: Alpaca rejects a resubmitted duplicate id
+    with 422 'client_order_id must be unique' rather than creating a
+    second order.
+
+    purpose: "e" (entry) | "x" (exit) | "r" (repair)
+    trade_date: "YYYYMMDD"
+    window: "1030" | "1330" | a fixed exit-rung name (e.g. "stop", "force1430")
+    underlying: "spy" | "qqq"
+    stage: "s0" | "s1" | rung name
+    """
+    cid = f"tg-{purpose}-{trade_date}-{window}-{underlying.lower()}-{stage}"
+    if len(cid) > 128:
+        raise ValueError(f"client_order_id too long ({len(cid)} chars): {cid}")
+    return cid
 
 
 def mleg_body(plan: SpreadPlan, qty: int) -> dict:

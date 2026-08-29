@@ -11,7 +11,6 @@ import json
 import os
 import subprocess
 import time
-import uuid
 
 PAPER_TRUE_VALUES = {"true", "1", "yes"}
 REQUIRED_ENDPOINT = "https://paper-api.alpaca.markets"
@@ -21,9 +20,24 @@ class NotPaperError(RuntimeError):
     """Raised whenever paper mode cannot be proven. Fails closed."""
 
 
+def _profile_env(profile):
+    """Verified live 29 Aug 2026: `alpaca doctor --profile X` silently
+    ignores the --profile flag and always reports on whichever profile is
+    currently `alpaca profile use`-active, while `alpaca account get
+    --profile X` correctly honors it (confirmed by comparing returned
+    account IDs) — and ALPACA_PROFILE=X works correctly for both. Rather
+    than trust the flag for some commands and not others, every subprocess
+    in this module gets the profile through the one mechanism verified to
+    work everywhere, so whatever assert_paper checks is guaranteed to be
+    what actually acts."""
+    return {**os.environ, "ALPACA_PROFILE": profile} if profile else dict(os.environ)
+
+
 def _run(*args, profile=None):
-    cmd = ["alpaca", *args, "--profile", profile] if profile else ["alpaca", *args]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        ["alpaca", *args], capture_output=True, text=True, timeout=30,
+        env=_profile_env(profile),
+    )
     try:
         # the CLI prints JSON to stdout on both success and error
         return json.loads(result.stdout)
@@ -37,6 +51,14 @@ def assert_paper(profile="submission"):
     Three-state result collapsed to two: PASS or raise. An unreadable or
     unparseable check is INCONCLUSIVE, and inconclusive fails closed —
     "treat unproven as live" (Alpaca's own MCP paper-trading skill, MCP:259).
+
+    Verifies three things, in order: (1) the endpoint doctor reports is
+    paper-api, (2) doctor's active profile is actually the one this call
+    claims to check — closes a real gap where the old --profile-flag check
+    always reported on whatever profile happened to be CLI-active, (3) for
+    the submission profile specifically, the live account id matches
+    ALPACA_ACCOUNT_ID — so a config mistake that points 'submission' at the
+    wrong paper account fails closed instead of silently trading it.
     """
     live_signal = os.environ.get("ALPACA_LIVE_TRADE", "")
     if live_signal.strip().lower() in PAPER_TRUE_VALUES:
@@ -44,8 +66,9 @@ def assert_paper(profile="submission"):
 
     try:
         doctor = subprocess.run(
-            ["alpaca", "doctor", "--profile", profile],
+            ["alpaca", "doctor"],
             capture_output=True, text=True, timeout=15,
+            env=_profile_env(profile),
         )
         output = doctor.stdout + doctor.stderr
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
@@ -53,8 +76,23 @@ def assert_paper(profile="submission"):
 
     if REQUIRED_ENDPOINT not in output:
         raise NotPaperError(
-            f"alpaca doctor did not report {REQUIRED_ENDPOINT} — inconclusive, treated as live"
+            f"alpaca doctor did not report {REQUIRED_ENDPOINT} for profile {profile!r} — inconclusive, treated as live"
         )
+    if f"active profile: {profile}" not in output:
+        raise NotPaperError(
+            f"alpaca doctor did not confirm active profile {profile!r} — inconclusive, treated as live. Output: {output[:300]!r}"
+        )
+
+    if profile == "submission":
+        expected_id = os.environ.get("ALPACA_ACCOUNT_ID", "").strip()
+        if not expected_id:
+            raise NotPaperError("ALPACA_ACCOUNT_ID is not set — refusing to trade the submission profile blind")
+        acct = _run("account", "get", profile=profile)
+        actual_id = acct.get("id") if isinstance(acct, dict) else None
+        if actual_id != expected_id:
+            raise NotPaperError(
+                f"account id mismatch for profile 'submission': expected {expected_id!r}, got {actual_id!r}"
+            )
 
 
 def clock():
@@ -116,7 +154,7 @@ def get_order(order_id, profile="submission"):
     return _run("order", "get", "--order-id", order_id, profile=profile)
 
 
-def submit_mleg(legs, limit_price, qty=1, time_in_force="day", client_order_id=None, profile="submission"):
+def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", profile="submission"):
     """Submit a multi-leg options order. `limit_price` sign is the caller's
     responsibility — negative for a net credit, positive for a net debit.
 
@@ -124,15 +162,18 @@ def submit_mleg(legs, limit_price, qty=1, time_in_force="day", client_order_id=N
     Exactly 2 legs for this codebase (verticals only); the mleg format
     itself supports up to 4.
 
-    client_order_id is generated and written to the journal by the caller
-    *before* this function runs, so a crash mid-submit stays recoverable —
-    the id exists on disk even if this HTTP call never returns.
+    client_order_id is REQUIRED, not generated here (see spread.client_order_id) —
+    that's the entire idempotency mechanism: the caller computes the same
+    deterministic id on every retry and looks it up (get_order_by_client_id)
+    before ever calling this. A random fallback here would silently defeat
+    that — verified live 29 Aug 2026 that Alpaca rejects a resubmitted
+    duplicate id with 422 'client_order_id must be unique' rather than
+    creating a second order, so the id must be the SAME id on retry, never
+    a fresh one.
     """
     assert_paper(profile)
     if len(legs) != 2:
         raise ValueError(f"expected exactly 2 legs, got {len(legs)}")
-    if client_order_id is None:
-        client_order_id = f"tg-{uuid.uuid4()}"
 
     args = [
         "order", "submit",
@@ -145,6 +186,19 @@ def submit_mleg(legs, limit_price, qty=1, time_in_force="day", client_order_id=N
         "--legs", json.dumps(legs),
     ]
     return _run(*args, profile=profile)
+
+
+def list_orders(status="open", profile="submission"):
+    """Live open/working orders — distinct from get_order_by_client_id's
+    single lookup. Needed because gate_concurrent only ever saw *filled*
+    positions: a crash after an order is accepted but before the journal
+    records it, retried in a later window (a different deterministic
+    client_order_id, since the id includes the window), was invisible to
+    both the id lookup and that gate — risking two live orders on one
+    underlying. loop.py folds this into the same tick-start state as filled
+    positions. --nested rolls mleg legs under their parent order."""
+    assert_paper(profile)
+    return _run("order", "list", "--status", status, "--nested", profile=profile)
 
 
 def poll_until_filled(order_id, max_attempts=60, profile="submission"):

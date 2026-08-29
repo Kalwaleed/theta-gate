@@ -3,7 +3,7 @@
 That's what makes this file unit-testable and what makes it the only
 component holding a real decision.
 
-`check_all` runs the fourteen-ish gates in order and returns the first
+`check_all` runs the eighteen-ish gates in order and returns the first
 failure reason, or None if the proposal is clear to submit. First rejection
 wins and is final — no gate is re-evaluated after a veto.
 """
@@ -45,6 +45,71 @@ def gate_account_ready(state: dict, plan, gov: dict, now: datetime) -> str | Non
     )
     if effective_level < required_level:
         return f"options_level: effective {effective_level} < required {required_level}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Direction routing — called by loop.py BEFORE any chain fetch or strike
+# selection, not part of check_all()'s pipeline (there is no plan yet).
+# ---------------------------------------------------------------------------
+
+def resolve_direction(proposal_direction: str) -> str | None:
+    """Canonical plan Sec 6.1 (HARD_SAFETY), 29 Aug 2026: V1 is put-credit
+    only. A bearish proposal is NO_TRADE, never a call-side substitution.
+    This is an explicit assertion loop.py must call, not an accident of
+    loop.py simply never constructing a bear_call plan — the guard has to
+    be real, not just unexercised code."""
+    if proposal_direction in ("bullish", "neutral"):
+        return "bull_put"
+    if proposal_direction == "bearish":
+        return None
+    raise ValueError(f"unknown proposal direction: {proposal_direction!r}")
+
+
+# ---------------------------------------------------------------------------
+# Regime group — entry-only, sourced from market.py's VIX/calendar snapshot.
+# Never blocks exits or liquidates an open position (see exit_signal, which
+# does not read any of these fields).
+# ---------------------------------------------------------------------------
+
+def gate_vix_zone(state: dict, plan, gov: dict, now: datetime) -> str | None:
+    """Canonical plan Sec 4.6, 29 Aug 2026. Boundaries fail conservatively —
+    VIX exactly at the ceiling or a flat term structure both reject."""
+    vix, vix9d, vix3m = state.get("vix"), state.get("vix9d"), state.get("vix3m")
+    if vix is None or vix9d is None or vix3m is None:
+        return "vix_zone: missing VIX/VIX9D/VIX3M — cannot confirm regime"
+    ceiling = gov["regime"]["vix_max_exclusive"]
+    if vix >= ceiling:
+        return f"vix_zone: VIX {vix:.2f} at or above ceiling {ceiling:.2f}"
+    if gov["regime"]["require_vix9d_lt_vix3m"] and not (vix9d < vix3m):
+        return f"vix_zone: term structure not in contango (VIX9D {vix9d:.2f} >= VIX3M {vix3m:.2f})"
+    return None
+
+
+def gate_intraday_shock(state: dict, plan, gov: dict, now: datetime) -> str | None:
+    move = state.get("intraday_move_pct")
+    if move is None:
+        return "intraday_shock: missing intraday move — cannot confirm regime"
+    ceiling = gov["regime"]["intraday_move_abs_max_exclusive"]
+    if abs(move) >= ceiling:
+        return f"intraday_shock: |{move:.1%}| at or above ceiling {ceiling:.1%}"
+    return None
+
+
+def gate_event_blackout(state: dict, plan, gov: dict, now: datetime) -> str | None:
+    """Reads the frozen, hand-verified event calendar — loop.py loads
+    governance.json's entry.event_calendar_path once and expands each event
+    into a concrete [start_ts, end_ts] blackout window (Tier 1: prior
+    session close through 30 min after release; Tier 2: +/-30 min) before
+    the tick begins. This gate never fetches anything itself, and a missing
+    calendar fails closed rather than silently skipping the check."""
+    blackouts = state.get("event_blackouts")
+    if blackouts is None:
+        return "event_blackout: no event calendar loaded — fails closed"
+    now_ts = now.timestamp()
+    for ev in blackouts:
+        if ev["start_ts"] <= now_ts <= ev["end_ts"]:
+            return f"event_blackout: inside {ev['name']} blackout window"
     return None
 
 
@@ -116,28 +181,37 @@ def gate_minimum_credit(state: dict, plan, gov: dict, now: datetime) -> str | No
 
 def gate_quote_sanity(state: dict, plan, gov: dict, now: datetime) -> str | None:
     max_spread_pct = gov["quote_sanity"]["max_spread_pct_of_mid"]
+    max_age = gov["quote_sanity"]["max_quote_age_seconds"]
     for leg, name in ((plan.short, "short"), (plan.long, "long")):
         if leg.bid <= 0 or leg.ask <= leg.bid:
             return f"quote_sanity: {name} leg has invalid bid/ask ({leg.bid}/{leg.ask})"
         spread_pct = (leg.ask - leg.bid) / leg.mid
         if spread_pct > max_spread_pct:
             return f"quote_sanity: {name} leg spread {spread_pct:.0%} exceeds {max_spread_pct:.0%}"
-    # ponytail: quote-age check omitted — Contract carries no timestamp yet.
-    # Add when loop.py threads the raw snapshot timestamp through parse_chain.
+        if leg.quote_ts is None:
+            return f"quote_sanity: {name} leg has no quote timestamp"
+        age = now.timestamp() - leg.quote_ts
+        if age > max_age:
+            return f"quote_sanity: {name} leg quote is {age:.0f}s old, exceeds {max_age}s"
     return None
 
 
 def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
     """The only edge this strategy claims. Verified live: a fairly priced
-    chain has zero arithmetic edge. Sell premium only when it's rich."""
+    chain has zero arithmetic edge. Sell premium only when it's rich.
+    Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check
+    to a 2.0-vol-point margin — IV barely above RV is noise, not a priced
+    premium."""
     if not gov["vrp"]["require_atm_iv_gte_realised_vol"]:
         return None
     atm_iv = state.get("atm_iv")
     realised_vol = state.get("realised_vol_20d")
     if atm_iv is None or realised_vol is None:
         return "vrp_present: missing IV or realised-vol input — cannot confirm premium exists"
-    if atm_iv < realised_vol:
-        return f"vrp_present: ATM IV {atm_iv:.3f} < 20d realised vol {realised_vol:.3f}, no premium"
+    vrp_points = (atm_iv - realised_vol) * 100
+    min_points = gov["vrp"]["min_vrp_points"]
+    if vrp_points < min_points:
+        return f"vrp_present: VRP {vrp_points:.1f} points below floor {min_points:.1f} (IV {atm_iv:.3f}, RV {realised_vol:.3f})"
     return None
 
 
@@ -146,13 +220,20 @@ def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
 # ---------------------------------------------------------------------------
 
 def size_position(plan, gov: dict) -> int:
-    """Sized on MAX LOSS, never premium collected. Pure math, no gate
-    side-effects — callers check the result against buying power separately."""
-    max_loss_cap = gov["risk"]["max_loss_per_trade_dollars"]
+    """Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the
+    entire hackathon, not computed from a max-loss budget. A 5-session
+    sample can't justify scaling, and budget-derived sizing was false
+    precision. Still returns 0 — never a fractional or negative size — if
+    even the fixed quantity would breach the per-trade cap; the actual
+    enforcement is gate_max_loss_per_trade below, this just keeps
+    size_position() from ever proposing a doomed qty."""
+    qty = gov["strategy"]["fixed_quantity"]
     per_contract_loss = (plan.width - plan.credit) * 100
     if per_contract_loss <= 0:
         return 0
-    return int(max_loss_cap // per_contract_loss)
+    if per_contract_loss * qty > gov["risk"]["max_loss_per_trade_dollars"]:
+        return 0
+    return qty
 
 
 def gate_max_loss_per_trade(state: dict, plan, gov: dict, now: datetime, qty: int) -> str | None:
@@ -183,6 +264,20 @@ def gate_concurrent(state: dict, plan, gov: dict, now: datetime) -> str | None:
         return f"concurrent: already at max positions for {plan.underlying}"
     if state.get("entries_today", 0) >= gov["entry"]["max_new_entries_per_session"]:
         return "concurrent: max new entries for this session reached"
+    return None
+
+
+def gate_daily_fill_cap_per_underlying(state: dict, plan, gov: dict, now: datetime) -> str | None:
+    """A filled entry earlier today blocks a same-underlying re-entry later
+    today, even if that earlier spread has already closed — canonical plan
+    Sec 4.5, 29 Aug 2026. Distinct from gate_concurrent above, which only
+    sees currently-open positions and live orders, not today's completed
+    round trips."""
+    filled_today = state.get("filled_underlyings_today", [])
+    cap = gov["risk"]["max_filled_entries_per_underlying_per_session"]
+    count = filled_today.count(plan.underlying)
+    if count >= cap:
+        return f"daily_fill_cap: {plan.underlying} already has {count} filled entr{'y' if count == 1 else 'ies'} today"
     return None
 
 
@@ -247,6 +342,9 @@ _STATE_ONLY_GATES = [
     gate_paper_env,
     gate_kill_switch,
     gate_account_ready,
+    gate_vix_zone,
+    gate_intraday_shock,
+    gate_event_blackout,
     gate_greeks_present,
     gate_dte_window,
     gate_delta_band,
@@ -255,6 +353,7 @@ _STATE_ONLY_GATES = [
     gate_quote_sanity,
     gate_vrp_present,
     gate_concurrent,
+    gate_daily_fill_cap_per_underlying,
     gate_daily_drawdown,
     gate_cumulative_drawdown,
     gate_deadline,
@@ -300,7 +399,7 @@ def exit_signal(position: dict, state: dict, gov: dict, now: datetime) -> str | 
     if cost_to_close <= take_profit_at:
         return "take_profit"
 
-    stop_at = credit * gov["exit"]["stop_loss_multiple_of_credit"]
+    stop_at = credit * gov["exit"]["stop_close_debit_multiple"]
     if cost_to_close >= stop_at:
         return "stop_loss"
 
