@@ -257,7 +257,9 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 | `loop.py` | One tick: recovery/reconcile → exits → entry window → journal (the largest piece). Built by a 4-phase workflow whose adversarial 3-lens verify pass caught 6 real defects (2 blocker: dry_run didn't gate real cancels, no naked-leg/raced-fill handling existed) before anything was trusted — all 6 fixed directly, see the partial-fill note below. | ✅ built |
 | `store.py` | SQLite read model derived from the journal: events + hash chain, folded positions, gate-rejection and equity-curve queries. Rebuildable, gitignored. | ✅ built |
 | `test_store.py` | 27 tests — every query asserted against loop.py's own journal scan on identical input, plus chain tamper-detection and rebuild determinism | ✅ built, all passing |
-| `app.py` | Streamlit dashboard, reads `store.py` | not yet — the hosted demo URL is a hard submission gate |
+| `app.py` | Streamlit dashboard, reads `store.py`. No network calls, no credentials — history only. | ✅ built |
+| `test_app.py` | 23 tests — SVG geometry on the degenerate curves (no trades, one trade, flat), money-sign formatting, and full-page execution via Streamlit's `AppTest` on empty, populated and halted journals | ✅ built, all passing |
+| `.streamlit/config.toml` | Theme matched to the diagrams; usage stats off | ✅ built |
 | `.github/workflows/agent.yml` | One workflow: cron + `workflow_dispatch` + one `concurrency:` group | ✅ built |
 | `env.example` | Documents the inverted `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE` trap, and `ALPACA_ACCOUNT_ID` (now required for `assert_paper` on the submission profile) | ✅ built |
 | `README.md` | The one-page write-up deliverable | not yet — Thursday |
@@ -318,7 +320,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 71/71 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism).
+1. `pytest -q` — currently 94/94 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism) and `test_app.py` (dashboard geometry and full-page render).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing. **Done, 29 Aug** — twice, `ok: true` both times; found and fixed a real gap along the way (`HALT.json` wasn't being git-published, so it would've been silently lost on an ephemeral CI runner).
