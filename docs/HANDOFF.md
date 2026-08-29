@@ -1,8 +1,8 @@
 # Handoff — Theta Gate
 
-**Written Sat 29 Aug 2026, 11:35 ET**, after the GitHub Actions rehearsal ran green with all secrets verified. State of the build at commit `ba6c495`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Written Sat 29 Aug 2026, 11:40 ET** — after the GitHub Actions rehearsal ran green on the real runner with all three secrets verified populated. `main` is pushed and in sync with `origin`; 45/45 tests pass. **No blockers remain for Monday's first live session.** Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
-Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts. **Verify the state below rather than trusting it** (`git log --oneline -5`, `pytest -q`); if it disagrees with the repo, the repo is right.
+Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts. **Verify state rather than trusting this file** (`git log --oneline -5`, `pytest -q`); if it disagrees with the repo, the repo is right. Commit hashes are deliberately not quoted as "current" here — they go stale the moment anything else lands, `journal:` commits from the agent itself included.
 
 ---
 
