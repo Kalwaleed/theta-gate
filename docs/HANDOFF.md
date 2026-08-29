@@ -1,6 +1,6 @@
 # Handoff — Theta Gate
 
-**Written Sat 29 Aug 2026, 11:25 ET**, after the first successful GitHub Actions rehearsal. State of the build at commit `c29231b`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Written Sat 29 Aug 2026, 11:35 ET**, after the GitHub Actions rehearsal ran green with all secrets verified. State of the build at commit `ba6c495`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts. **Verify the state below rather than trusting it** (`git log --oneline -5`, `pytest -q`); if it disagrees with the repo, the repo is right.
 
@@ -20,7 +20,7 @@ Every file in the trading path is built, tested, and committed. **45/45 tests pa
 | `app.py` (Streamlit dashboard) | **Not built** — Tuesday, does not block trading |
 | `README.md` write-up for judges | **Not built** — Thursday, needs real trading history |
 
-GitHub config: `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` are set correctly; `ALPACA_ACCOUNT_ID` is a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas). **`ANTHROPIC_API_KEY` exists but is EMPTY — fix before Monday, see below.**
+GitHub config is complete and **verified by a real run**: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` and `ANTHROPIC_API_KEY` all render as `***` (masked = populated) in run `33260744206`'s env dump; `ALPACA_ACCOUNT_ID` is a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas).
 
 The workflow itself is proven end to end: a `workflow_dispatch` rehearsal ran green on the real runner Sat 29 Aug 11:15 ET (run `33259706303`, 46s) — checkout, Python 3.14, pinned Alpaca CLI 0.0.13, `assert_paper` against the real account, live broker reads, and `_git_publish` committing and pushing the journal to `main` as `theta-gate-agent[bot]`. Returned `ok: true`, `entry.attempted: false` (weekend, correctly short-circuited). That run is what proves the CI half of durability: until it, `_git_publish` had only ever been exercised on a local machine, never from an ephemeral runner where a lost push actually costs state.
 
@@ -32,27 +32,17 @@ Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,00
 
 ## Do this next
 
-**1. BLOCKER — `ANTHROPIC_API_KEY` is an empty secret.** The rehearsal's env dump showed `ALPACA_API_KEY: ***` and `ALPACA_SECRET_KEY: ***` (masked = populated) but `ANTHROPIC_API_KEY:` blank. Cause: it was set via `grep '^ANTHROPIC_API_KEY=' .env | ... | gh secret set`, and `.env` lines carry **leading whitespace**, so the `^` anchor matched nothing and an empty value was piped in. Left as-is, every Monday tick runs, proposes nothing, and journals `model_failure_or_malformed` — no crash, no trade, no obvious alarm.
-
-Fix interactively (no parsing, no anchor bug — paste the key at the prompt):
-
-```bash
-gh secret set ANTHROPIC_API_KEY --repo Kalwaleed/theta-gate
-```
-
-Then **re-run the rehearsal below and confirm the env dump shows `***`**. `gh secret list` cannot detect this — it lists the name and timestamp for an empty secret exactly as for a populated one. Only a real run proves it.
-
-**2. Re-run the workflow rehearsal to confirm the fix.**
+**1. Re-run the rehearsal any time you change a secret or the workflow.**
 
 ```bash
 gh workflow run "Theta Gate Agent" --repo Kalwaleed/theta-gate -f dry_run=true
 gh run watch --repo Kalwaleed/theta-gate
-gh run view <run-id> --repo Kalwaleed/theta-gate --log | grep "ANTHROPIC_API_KEY:"
+gh run view <run-id> --repo Kalwaleed/theta-gate --log | grep -E "API_KEY:"
 ```
 
-Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. Expect `ok: true`, `entry.attempted: false`, a new `theta-gate-agent[bot]` journal commit, and `ANTHROPIC_API_KEY: ***`.
+Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. Expect `ok: true`, `entry.attempted: false`, a new `theta-gate-agent[bot]` journal commit, and every `*_API_KEY` rendering as `***`.
 
-**3. Monday during market hours — finish the gate verification.** The weekend live check confirmed gates fire in the right order, but only up to `gate_delta_band`: no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08 in low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. Re-run the checker once the market is open:
+**2. Monday during market hours — finish the gate verification.** The weekend live check confirmed gates fire in the right order, but only up to `gate_delta_band`: no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08 in low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. Re-run the checker once the market is open:
 
 ```bash
 set -a; source .env; set +a
@@ -61,7 +51,7 @@ PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py
 
 It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but is strictly read-only — no journal writes, no git, no order submission. It *does* make one real `brain.propose()` call, so it costs an Anthropic API call per run.
 
-**4. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
+**3. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
 
 ---
 
@@ -72,8 +62,13 @@ It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but i
 - **GitHub secrets and variables are separate namespaces.** `secrets.ALPACA_ACCOUNT_ID` resolves to an empty string when the value is stored as a variable — silent, and it trips `assert_paper` on every scheduled run. Cost us a real blocker; fixed in `257ccdc`.
 - **`--dry-run` gates `submit_mleg` *and* `cancel_order`.** A cancel is a broker write, and an order under dry-run may be a *real* order adopted from an earlier live tick. Do not add a broker write that ignores the `dry_run` flag.
 - **Duplicate `client_order_id` is rejected with HTTP 422, never duplicated.** Verified live. This is the entire idempotency mechanism: recompute the *same* id on retry and look it up first. A random fallback id would silently defeat it.
-- **`.env` lines carry leading whitespace, and the file has a stray heredoc marker.** Sourcing it prints `.env:7: command not found: EOF` (harmless). The whitespace is not harmless: `grep '^KEY='` silently matches nothing, which is how an empty `ANTHROPIC_API_KEY` reached GitHub. Prefer interactive `gh secret set` over piping from `.env`.
-- **`gh secret list` cannot tell an empty secret from a populated one.** Both show name + timestamp. The only reliable check is a workflow run: a populated secret renders as `***` in the log's env dump, an empty one renders blank.
+- **`.env` lines carry leading whitespace, and the file has a stray heredoc marker.** Sourcing it prints `.env:7: command not found: EOF` (harmless). The whitespace is not harmless: `grep '^KEY='` silently matches nothing, which is how an empty `ANTHROPIC_API_KEY` reached GitHub and cost two failed attempts. Setting a secret from `.env` needs no `^` anchor, plus quote/CR stripping — and **echo the character count to prove extraction worked before storing it**:
+  ```bash
+  V=$(grep -m1 '^[^#]*ANTHROPIC_API_KEY=' .env | cut -d= -f2- | tr -d ' "'"'"'\r'); echo "extracted ${#V} chars"
+  printf '%s' "$V" | gh secret set ANTHROPIC_API_KEY --repo Kalwaleed/theta-gate
+  ```
+- **Interactive `gh secret set` does not work from Claude Code's `!` prompt.** stdin isn't a TTY there, so `gh` reads nothing and silently stores an empty value. Use the piped form above, a real terminal, or the GitHub web UI.
+- **`gh secret list` cannot tell an empty secret from a populated one.** Both show name + timestamp; `gh secret set` prints nothing either way. The only reliable check is a workflow run: a populated secret renders as `***` in the log's env dump, an empty one renders blank. This is the single highest-value verification in the whole setup — it is how the empty key was caught at all.
 
 ---
 
