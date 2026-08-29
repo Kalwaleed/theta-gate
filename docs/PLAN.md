@@ -39,6 +39,7 @@ That document also specs a production-grade control system — Postgres with row
 - **Concurrency** is one GitHub Actions `concurrency:` group (`cancel-in-progress: false`) — a platform feature, not custom infra.
 - **Journal** is an append-only local JSONL, written incrementally (intent before every broker call, outcome after — not batched at tick end), git-committed.
 - **HALT** is a local flag file, checked at tick start.
+- **The LLM boundary is tighter than specced, not looser:** the proposer runs with `tools=[]` and `mcp_servers={}` rather than a read-only MCP allowlist, and the second-pass critic is cut — `risk.py`'s gates already re-verify delta, credit, greeks and quote age on the resolved legs, deterministically. See [The Alpaca integration is the CLI](#the-alpaca-integration-is-the-cli--corrected-29-aug-2026).
 
 No Postgres/RLS, no OIDC/Sigstore attestation, no immutable-tag promotion, no branch-freeze ruleset, no chaos/race test suite, no 5-way workflow split — one `.github/workflows/agent.yml`.
 
@@ -83,9 +84,8 @@ GitHub Actions cron  ──▶  python loop.py --once      (:07 :22 :37 :52, 13:
         ├─ 4. STATE      account + positions + journal
         │
         ├─ 5. ENTRY  (first tick after 10:30 ET, and after 13:30 ET)
-        │       ├─ PROPOSER  Claude + read-only MCP  → {underlying, direction, conviction, dte, thesis, invalidation}
+        │       ├─ PROPOSER  Claude, NO tools at all → {underlying, direction, target_dte, thesis}
         │       ├─ RESOLVE   pure Python             → target delta ⇒ real OCC symbols from live chain
-        │       ├─ CRITIC    Claude, fresh context   → re-fetches the CHOSEN legs, judges thesis only
         │       └─ GUARD     pure Python, no LLM     → first rejection wins, and is final
         │
         ├─ 6. EXECUTE    alpaca api POST /v2/orders  (mleg, 2 legs, limit, client_order_id)
@@ -101,9 +101,27 @@ The journal-commit-per-tick earns its keep three times: state for Streamlit, aud
 
 **The important point: the loss cap does not depend on the scheduler.** Max loss is the spread width, fixed at entry. A dropped run cannot exceed it.
 
-### Why both MCP and CLI, genuinely
+### The Alpaca integration is the CLI — corrected 29 Aug 2026
 
-**MCP is the agent's perception.** Proposer and critic call `get_news`, `get_market_movers`, `get_option_snapshot`. The critic re-verifies delta and credit from a fresh snapshot — the agent that generated the idea does not get to validate it, nor to validate it from cached data. Run via `uvx alpaca-mcp-server` with a **read-only tool allowlist**: `place_option_order` and `close_position` are never exposed to the model.
+**As built, the agent talks to Alpaca through the CLI only.** `alpaca.py` shells out to the `alpaca` binary for every broker call — `clock`, `account get`, `position list`, `data option chain`, `data stock-bars`, `data latest-quote`, `order get`/`get-by-client-id`/`list`/`cancel`, and `api POST /v2/orders` for the 2-leg `mleg`. That satisfies the hackathon's second hard gate (MCP **or** CLI; the plain REST SDK does not count), and `alpaca-py` is excluded from `requirements.txt` on purpose.
+
+**An earlier draft of this section described MCP as "the agent's perception" — proposer and critic calling `get_news`, `get_market_movers`, `get_option_snapshot`, with the critic re-verifying delta and credit from a fresh snapshot. None of that shipped, and this section previously claimed it did.** What `brain.py` actually does (lines 235-244):
+
+```python
+options = ClaudeAgentOptions(
+    system_prompt=SYSTEM_PROMPT, model=MODEL_ID, max_turns=1,
+    tools=[], allowed_tools=[], mcp_servers={},
+    strict_mcp_config=True, setting_sources=[],
+)
+```
+
+Zero tools, zero MCP servers, one turn, and no filesystem/user/project settings. The model sees only the same market numbers already computed for the gates.
+
+**This is tighter than the plan, not looser** — and it is the honest version of the "the LLM has read-only tools" claim. A proposer with a read-only allowlist still holds a network client and still depends on an allowlist being maintained correctly; a proposer with `tools=[]` cannot reach anything at all, and `strict_mcp_config=True` means a stray `.mcp.json` in the working directory cannot quietly re-arm it. The breach is unreachable rather than forbidden, which is the whole argument this project makes.
+
+**The critic was cut, deliberately.** Its specified job was to re-verify delta and credit on the chosen legs from a fresh snapshot. `risk.py` already does exactly that, deterministically, on the actual selected contracts — `gate_delta_band`, `gate_credit_quality`, `gate_minimum_credit`, `gate_quote_sanity` and `gate_greeks_present` all run against the resolved legs, not against the proposal. A second LLM pass could not veto anything the guard does not already veto, and it could not overrule the guard if it wanted to. It would have added a model call, a failure mode, and a latency budget to buy nothing.
+
+**`.mcp.json` in the repo root is developer tooling, not the agent's runtime.** It configures `uvx alpaca-mcp-server` for a human's Claude Code session while working on this repo. `brain.py` never reads it — `mcp_servers={}` plus `strict_mcp_config=True` is precisely what guarantees that.
 
 **CLI is the deterministic hands.** `clock`, `account get`, `position list`, `data option chain`, `api POST /v2/orders`, plus explicit single-symbol closes — never a bulk operation. See "Constraints adopted from Alpaca's own skills" below.
 
@@ -270,7 +288,7 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 Deployed from the repo, auto-redeploying on each push. **Primary view is history, not live state.** Judges review off-hours with the market shut.
 
 1. Equity curve
-2. Decision log — thesis, invalidation, critic verdict, proposed vs filled price per leg
+2. Decision log — the proposer's thesis, the gate that vetoed (or that none did), proposed vs filled price per leg
 3. **"Why no trade"** — gate rejections counted by reason
 4. Open and closed positions with entry credit, exit reason, realised P&L
 5. `governance.json` verbatim
