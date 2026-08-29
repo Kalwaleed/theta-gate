@@ -283,7 +283,7 @@ Deployed from the repo, auto-redeploying on each push. **Primary view is history
 
 **Sat 29 Aug** — market shut, commits still count. Empirically verified the core idempotency assumption live (a resubmitted duplicate `client_order_id` gets rejected, not duplicated) on the throwaway profile. Canonical-plan correctness fixes landed: `governance.json` + `risk.py` + `spread.py` + `alpaca.py` + the full test file — done, 30/30 passing at the time. Same day: `market.py`, `brain.py`, `loop.py`, and `.github/workflows/agent.yml` built via a 4-phase workflow; its adversarial verify pass caught 6 real `loop.py` defects (2 blocker) before anything was trusted, all fixed same-day — **44/44 passing**.
 
-**Sun 30 Aug** — full `--dry-run` rehearsal; a live-gate sanity check (real SPY/QQQ chain + VIX data through the full gate stack, pass rate reviewed rather than assumed — over ~4 real entry windows this week, not 5, an ISM Manufacturing PMI release blacks out Tuesday morning). The upstream options-spreads skill PR stays deprioritized behind all of this, per the canonical plan's own priority call.
+**Sun 30 Aug** — full `--dry-run` rehearsal: ran clean twice, `ok: true`, journal committed and pushed to `origin/main`. Found and fixed one more real gap live: `HALT.json` was never git-published, so any HALT triggered on an ephemeral GitHub Actions runner would've been silently lost before the next tick's fresh checkout — fixed, verified by re-running. Live-gate sanity check: ran the full pipeline (market.py → spread.py → risk.py, plus a real `brain.propose` call — first live confirmation the LLM call works end to end) against real SPY/QQQ chains and real VIX/event data. Zero natural candidates, correctly — current deltas in the 6–9 DTE window (0.04–0.08) don't reach the 0.16–0.25 band given today's low realised/implied vol. Forced one real out-of-band candidate through `risk.check_all` directly to confirm the gate chain fires in order with correct math, through `gate_delta_band`. **Still open for Monday**: a natural pass-through of the later gates (credit_quality, quote_sanity, VRP, sizing) on real data, since nothing today cleared delta_band to reach them. The upstream options-spreads skill PR stays deprioritized behind all of this, per the canonical plan's own priority call.
 
 **Mon 31 Aug** — First autonomous cycle, first real spread (exactly 1 contract).
 **Tue 1 Sep** — `app.py` if time remains, deploy, verify the URL cold from outside.
@@ -306,6 +306,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 | Streamlit cold start | Actions pings each tick | First-click spinner |
 | Secrets in a public repo | `.gitignore` from commit one; Actions Secrets; `/security-review` before going public | — |
 | Six sessions is not a sample | Write-up states n and claims nothing about edge | — |
+| Ephemeral CI runner loses local state before publishing | Journal and HALT.json are git-published together every tick; a failed push now fails the tick loudly (`ok=False`, non-zero exit); a broker position the journal doesn't account for HALTs | A push failure still loses that tick's local writes -- the loudness only ensures a human notices quickly, not a recovery of the lost tick |
 
 **Rollback:** `touch HALT` stops all opening. Flattening is position by position, by explicit order — never a bulk endpoint. The account is fresh, paper, funded with nothing real.
 
@@ -316,7 +317,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 1. `pytest -q` — currently 44/44 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing) and `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
-4. One full `loop.py --once --dry-run` that logs and sends nothing.
-5. Force a veto against each gate; confirm it appears in the "Why no trade" panel.
+4. One full `loop.py --once --dry-run` that logs and sends nothing. **Done, 29 Aug** — twice, `ok: true` both times; found and fixed a real gap along the way (`HALT.json` wasn't being git-published, so it would've been silently lost on an ephemeral CI runner).
+5. Force a veto against each gate; confirm it appears in the "Why no trade" panel. **Partly done, 29 Aug** — confirmed for `gate_delta_band` against a real out-of-band contract (correct rejection message, correct gate order up to that point). The remaining gates (credit_quality, quote_sanity, VRP, sizing) are order-verified by code path only, not yet individually forced against real data — closes naturally once a real candidate clears delta_band during Monday's market hours.
 6. `browse` the Streamlit URL cold, from outside.
 7. `/security-review` before the repo goes public.
