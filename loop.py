@@ -382,7 +382,23 @@ def _fresh_close_quotes(underlying, expiry, short_symbol, long_symbol, profile):
 
 
 def _current_entry_window(now, gov):
+    """None on a weekend, whatever the clock says. The cron schedule in
+    .github/workflows/agent.yml is already weekday-only, so this never
+    fires in normal operation -- it exists for the manual
+    workflow_dispatch path, which has no such restriction and would
+    otherwise run the whole entry pipeline (chain fetches + a real,
+    billed brain.propose call) at 10:35 on a Saturday.
+
+    Deliberately NOT a full market-calendar check: exchange holidays are
+    not covered here (none fall in the 31 Aug - 4 Sep window). A holiday
+    tick still fails safe rather than trading -- quotes are stale by
+    definition and gate_quote_sanity's 60-second ceiling rejects every
+    candidate -- so the residual cost is wasted API calls, not a bad
+    trade. Upgrade path if this ever runs past the hackathon window: gate
+    on alpaca.clock()'s is_open instead of the weekday."""
     now_et = now.astimezone(ET)
+    if now_et.weekday() >= 5:
+        return None
     for w in gov["entry"]["windows_et"]:
         start = dtime.fromisoformat(w)
         start_dt = datetime.combine(now_et.date(), start, tzinfo=ET)

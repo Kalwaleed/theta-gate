@@ -86,12 +86,23 @@ def test_lookup_or_submit_distinguishes_dry_run_echo_from_real_submit():
 
 def test_current_entry_window_15_minutes_wide():
     gov = {"entry": {"windows_et": ["10:30", "13:30"]}}
-    at = lambda h, m: datetime(2026, 9, 1, h, m, tzinfo=ET)
+    at = lambda h, m: datetime(2026, 9, 1, h, m, tzinfo=ET)  # a Tuesday
     assert loop._current_entry_window(at(10, 30), gov) == "1030"
     assert loop._current_entry_window(at(10, 44), gov) == "1030"
     assert loop._current_entry_window(at(10, 45), gov) is None
     assert loop._current_entry_window(at(13, 29), gov) is None
     assert loop._current_entry_window(at(13, 30), gov) == "1330"
+
+
+def test_current_entry_window_is_none_on_a_weekend():
+    # The cron schedule is weekday-only, but a manual workflow_dispatch
+    # is not -- without this, triggering a rehearsal at 10:35 on a
+    # Saturday runs the full entry pipeline, including a real billed
+    # brain.propose call, against stale weekend quotes.
+    gov = {"entry": {"windows_et": ["10:30", "13:30"]}}
+    assert loop._current_entry_window(datetime(2026, 8, 29, 10, 35, tzinfo=ET), gov) is None  # Saturday
+    assert loop._current_entry_window(datetime(2026, 8, 30, 10, 35, tzinfo=ET), gov) is None  # Sunday
+    assert loop._current_entry_window(datetime(2026, 8, 31, 10, 35, tzinfo=ET), gov) == "1030"  # Monday
 
 
 def test_exit_attempt_number_counts_by_position_not_reason():
