@@ -856,14 +856,24 @@ def _cross_check_entries_today(journal_count, now, profile):
 # ---------------------------------------------------------------------------
 
 def _git_publish(now):
+    """Publishes the journal AND the HALT flag together. HALT is only a
+    real circuit breaker if it survives to the next tick's fresh checkout
+    on an ephemeral CI runner -- an unpublished HALT.json is silently lost
+    the moment that runner is destroyed, defeating every HALT trigger in
+    this file exactly the way an unpublished journal entry defeats the
+    risk caps (see the publish_failed check in _run_tick_body). HALT.json
+    is only ever git-added when it exists, and its content is stable
+    (only _trigger_halt writes to it after the first tick), so this does
+    not create a commit every tick -- only when a halt is newly set."""
     try:
         subprocess.run(["git", "pull", "--rebase", "origin", "main"],
                         capture_output=True, text=True, timeout=30, check=False)
-        status = subprocess.run(["git", "status", "--porcelain", JOURNAL_PATH],
+        paths = [JOURNAL_PATH] + ([HALT_PATH] if Path(HALT_PATH).exists() else [])
+        status = subprocess.run(["git", "status", "--porcelain", *paths],
                                  capture_output=True, text=True, timeout=15, check=False)
         if not status.stdout.strip():
             return {"committed": False, "reason": "nothing to commit"}
-        subprocess.run(["git", "add", JOURNAL_PATH], capture_output=True, text=True, timeout=15, check=False)
+        subprocess.run(["git", "add", *paths], capture_output=True, text=True, timeout=15, check=False)
         subprocess.run(["git", "commit", "-m", f"journal: tick {now.isoformat()}"],
                         capture_output=True, text=True, timeout=15, check=False)
         push = subprocess.run(["git", "push"], capture_output=True, text=True, timeout=30, check=False)
