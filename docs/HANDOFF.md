@@ -1,0 +1,88 @@
+# Handoff — Theta Gate
+
+**Written Sat 29 Aug 2026, 10:55 ET.** State of the build at commit `ff0c3a2`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+
+Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts.
+
+---
+
+## Where things stand
+
+Every file in the trading path is built, tested, and committed. **45/45 tests pass** (`pytest -q`, Python 3.14.6 in `.venv`).
+
+| Component | State |
+|---|---|
+| `alpaca.py`, `spread.py`, `risk.py` | Built, tested |
+| `market.py`, `brain.py`, `loop.py` | Built, tested |
+| `.github/workflows/agent.yml` | Built; cron every 5 min, weekdays, 09:30–16:00 ET |
+| `governance.json`, event calendar | Built |
+| `app.py` (Streamlit dashboard) | **Not built** — Tuesday, does not block trading |
+| `README.md` write-up for judges | **Not built** — Thursday, needs real trading history |
+
+GitHub is fully configured: three secrets (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ANTHROPIC_API_KEY`), and `ALPACA_ACCOUNT_ID` as a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas).
+
+Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,000, zero positions, zero orders, zero manual trades. **Never place a manual order on it** — its history is the judges' evidence the agent is autonomous.
+
+---
+
+## Do this next
+
+**1. Rehearse the workflow on GitHub before Monday.** Everything so far was verified locally; the real runner (different OS, fresh CLI install, real secrets) has never executed a tick.
+
+```bash
+gh workflow run "Theta Gate Agent" --repo Kalwaleed/theta-gate -f dry_run=true
+gh run watch --repo Kalwaleed/theta-gate
+```
+
+Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. It still proves checkout, Python setup, CLI install, `assert_paper`, broker reads, and the journal commit+push. Expect `ok: true`, `entry.attempted: false`, and a new `journal:` commit authored by `theta-gate-agent[bot]`.
+
+**2. Monday during market hours — finish the gate verification (task #6).** Sunday's live check confirmed gates fire in the right order, but only up to `gate_delta_band`: on the weekend snapshot no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08, low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. A standalone read-only checker was used for this; rewrite it as needed — it wrote nothing and committed nothing:
+
+```
+/Users/papasmurf/.claude/jobs/94b00c5f/tmp/live_gate_check.py   # ephemeral, may be gone
+```
+
+**3. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
+
+---
+
+## Gotchas that already bit us — do not re-derive
+
+- **`alpaca doctor --profile X` silently ignores the flag.** Verified live. `alpaca.py` routes every call through the `ALPACA_PROFILE` env var instead (`_profile_env`). Regular commands like `account get` *do* honor `--profile`; only `doctor` lies. Do not "simplify" this back to the flag.
+- **`ALPACA_ACCOUNT_ID` is the UUID, not the account number.** `PA32UO0QXLRO` is the account_number shown in Alpaca's dashboard; `assert_paper` compares against `id`. Using the account_number fails closed on every tick, permanently.
+- **GitHub secrets and variables are separate namespaces.** `secrets.ALPACA_ACCOUNT_ID` resolves to an empty string when the value is stored as a variable — silent, and it trips `assert_paper` on every scheduled run. Cost us a real blocker; fixed in `257ccdc`.
+- **`--dry-run` gates `submit_mleg` *and* `cancel_order`.** A cancel is a broker write, and an order under dry-run may be a *real* order adopted from an earlier live tick. Do not add a broker write that ignores the `dry_run` flag.
+- **Duplicate `client_order_id` is rejected with HTTP 422, never duplicated.** Verified live. This is the entire idempotency mechanism: recompute the *same* id on retry and look it up first. A random fallback id would silently defeat it.
+- **Sourcing `.env` prints `.env:7: command not found: EOF`.** Harmless, pre-existing; a stray heredoc marker in the file. Cosmetic only — but worth cleaning.
+
+---
+
+## Known-open, deliberately
+
+- **Exchange holidays are not checked.** `_current_entry_window` gates on weekday only. None fall in the 31 Aug–4 Sep window, and a holiday tick fails safe anyway (stale quotes → `gate_quote_sanity` rejects). Upgrade path if this outlives the hackathon: gate on `alpaca.clock()`'s `is_open`.
+- **No automated single-leg repair.** If a cancel loses the race against a fill and leaves one leg naked, `loop.py` sets HALT and journals CRITICAL — a human closes it. `alpaca.py` has no single-leg order primitive, and building one untested days before the deadline is its own risk. Detection is thorough; remediation is manual.
+- **Orphan equity (overnight assignment) is detected, not flattened.** Same reason — no stock-order primitive in `alpaca.py`. Blocks entries, journals CRITICAL.
+- **A failed `git push` loses that tick's local writes.** Now loud (tick returns `ok: false`, non-zero exit, red Actions run) rather than silent, but not recovered.
+
+---
+
+## Operating notes
+
+Run a tick locally (reads and journal writes are real; broker writes held back):
+
+```bash
+set -a; source .env; set +a
+.venv/bin/python3 loop.py --once --dry-run --profile submission
+```
+
+Use `.venv/bin/python3`, not system `python3` — `claude_agent_sdk` is only in the venv.
+
+**Kill switch:** set `active: true` in `data/HALT.json`. Blocks all new entries; exits and reconciliation keep running by design. `loop.py` also sets it automatically on a naked leg or an untracked broker position. It is git-published each tick, so it survives the ephemeral runner.
+
+Repo: `https://github.com/Kalwaleed/theta-gate` (private). Six collaborators already have access; no one else needs adding.
+
+---
+
+## Trading plan, in one line each
+
+Put-credit spreads on SPY/QQQ, 6–9 DTE, short delta 0.16–0.25, $5 wide, **exactly 1 contract**, entries at 10:30 and 13:30 ET in 15-minute windows. Bearish proposals are NO_TRADE — V1 is put-only, never a call-side substitution. Last new entry Wed 2 Sep 10:45 ET; everything flattens Thu 3 Sep from 14:30 ET via a four-rung ladder; Fri 4 Sep is monitor-only ahead of the 11:00 ET submission. The LLM proposes an underlying and a direction and nothing else — strikes, sizing, and every gate are deterministic Python.
