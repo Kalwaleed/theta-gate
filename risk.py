@@ -49,8 +49,16 @@ def gate_account_ready(state: dict, plan, gov: dict, now: datetime) -> str | Non
 
 
 # ---------------------------------------------------------------------------
-# Direction routing — called by loop.py BEFORE any chain fetch or strike
-# selection, not part of check_all()'s pipeline (there is no plan yet).
+# Direction routing — not part of check_all()'s pipeline (there is no plan
+# yet). Called by loop.py BEFORE any strike selection (spread.rank_candidates),
+# but AFTER that tick's chain fetch (market.build_underlying_state) — not
+# before it, as an earlier version of this comment claimed. Currently safe
+# regardless of call order only because build_underlying_state hardcodes
+# option_type="put" unconditionally: a bearish proposal simply gets no
+# strikes chosen from the puts already fetched. That stops being true the
+# moment call-side support is added — a call fetch driven by direction would
+# then need to happen AFTER this function, not before, or a bearish proposal
+# could still trigger a real call-chain fetch before being rejected.
 # ---------------------------------------------------------------------------
 
 def resolve_direction(proposal_direction: str) -> str | None:

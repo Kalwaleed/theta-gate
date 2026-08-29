@@ -138,7 +138,7 @@ Bonus: the MCP server ships `search_alpaca_docs` / `get_alpaca_endpoint_docs` as
 
 ## Risk guard
 
-Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 30 passing tests in `test_agent.py`.
+Pure functions, `(state, plan) -> str | None`. No I/O, no network; time is injected. Numbers live in `governance.json`, rendered verbatim in the dashboard beside the line "no LLM can write to this file". Implemented in `risk.py`, 44 passing tests across `test_agent.py` and `test_loop.py`.
 
 `resolve_direction(proposal_direction)` runs before any of this, before a chain is even fetched — a bearish proposal is `NO_TRADE`, never a call-side substitution (canonical plan §6.1, `HARD_SAFETY`). Everything below assumes a `bull_put` plan already exists.
 
@@ -196,7 +196,7 @@ Five recommendations, two implemented same-day, three deferred to Monday's `brai
 - **Superseded, not implemented:** the original DTE-preference recommendation (`dte_preferred_max: 6`, biasing toward 4-6 DTE) is gone. The canonical plan's own costed argument runs the other way — a 4-DTE spread entered Monday hits the 2-DTE time exit Wednesday and pays two bid-asks for two days of theta, while a 7–9 DTE spread held to Thursday's flatten never touches the time exit. `gate_dte_window` now hard-enforces **6–9**, and `loop.py` will enumerate every eligible expiry in that range and rank candidates (lowest quote friction → delta closest to 0.20 → largest DTE) rather than preferring one DTE over another.
 - **Deferred — order-pricing discipline:** walk the limit price toward the NBBO mid over the poll window instead of a single static quote, to reduce the vig cost the live probe measured (~$7 round trip). Belongs in `loop.py`'s submission logic, not `risk.py` — it's an execution tactic, not a gate.
 - **Killed, not deferred — legged-condor neutral mode:** the canonical plan is explicit (§4.7, `HARD_SAFETY`): *"Never both sides on the same underlying — that is a condor by another name."* A neutral proposal now just resolves to the same put credit spread as bullish (`resolve_direction`, above) — no second leg pair, no linked-exposure accounting needed in `gate_concurrent`.
-- **Deferred — sharpened partial-fill repair:** on a partial fill, actively close the exposed leg immediately with its own order rather than cancel-and-wait for the 60s timeout. Tightens the existing partial-fill unwind; implement alongside `loop.py`'s order-submission logic Monday.
+- **Decided, not the original shape — partial-fill / naked-leg handling:** built in `loop.py`, but as detect-and-HALT, not the automated same-order repair originally sketched here. Every cancel now checks whether it actually won the race against a fill (Alpaca does not guarantee a cancel beats a fill in flight) and, if exactly one leg of a vertical ends up open alone, HALTs and journals CRITICAL rather than firing a fresh single-leg close order. Reason: `alpaca.py` has no single-leg order primitive, and shipping one untested days before the deadline is itself a real-money-shaped risk — a human closing it manually from a CRITICAL journal entry is safer than an unrehearsed auto-repair path for an event rare enough that this codebase has never exercised it live.
 
 ---
 
@@ -247,14 +247,14 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 | `alpaca.py` | CLI subprocess wrapper, paper asserted at every call, one `ALPACA_PROFILE`-env-var mechanism | ✅ built |
 | `spread.py` | Strike selection + mleg body construction + deterministic `client_order_id`. Pure. | ✅ built |
 | `risk.py` | The gates (18 state-only + 3 sized) + `check_all()` + `exit_signal()` + `resolve_direction()`. Stdlib only. | ✅ built |
-| `test_agent.py` | 30 tests, fixtures from the real 26 Aug chain | ✅ built, all passing |
+| `test_agent.py` + `test_loop.py` | 44 tests (32 + 12), fixtures from the real 26 Aug chain | ✅ built, all passing |
 | `governance.json` | Every risk number, one place | ✅ built |
 | `data/events_2026-08-31_2026-09-04.json` | Hand-verified FOMC/CPI/PCE/NFP/ISM/ADP/jobless-claims calendar for the trading week, sourced live against federalreserve.gov/bls.gov/ismworld.org/adpemploymentreport.com | ✅ built |
-| `market.py` | State builder: bars → RV20, Cboe VIX-family CSV, chain, intraday move | not yet — today/tomorrow |
-| `brain.py` | The one bounded proposer call, read-only, scrubbed env, fail-closed validator | not yet — today/tomorrow |
-| `loop.py` | One tick: recovery/reconcile → exits → entry window → journal (the largest remaining piece) | not yet — today/tomorrow |
+| `market.py` | State builder: bars → RV20, Cboe VIX-family CSV, chain, intraday move | ✅ built |
+| `brain.py` | The one bounded proposer call, read-only, scrubbed env, fail-closed validator | ✅ built |
+| `loop.py` | One tick: recovery/reconcile → exits → entry window → journal (the largest piece). Built by a 4-phase workflow whose adversarial 3-lens verify pass caught 6 real defects (2 blocker: dry_run didn't gate real cancels, no naked-leg/raced-fill handling existed) before anything was trusted — all 6 fixed directly, see the partial-fill note below. | ✅ built |
 | `app.py` | Streamlit dashboard | not yet — deprioritized behind the trading loop |
-| `.github/workflows/agent.yml` | One workflow: cron + `workflow_dispatch` + one `concurrency:` group | not yet — Sunday |
+| `.github/workflows/agent.yml` | One workflow: cron + `workflow_dispatch` + one `concurrency:` group | ✅ built |
 | `env.example` | Documents the inverted `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE` trap, and `ALPACA_ACCOUNT_ID` (now required for `assert_paper` on the submission profile) | ✅ built |
 | `README.md` | The one-page write-up deliverable | not yet — Thursday |
 | `docs/diagrams/*.html` | Architecture, sequence, flowchart — KBW skin | ✅ built |
@@ -281,9 +281,9 @@ Deployed from the repo, auto-redeploying on each push. **Primary view is history
 
 **Fri 28 Aug from 11:00 ET** — create the **fresh submission** paper account, confirm $100,000, record the ID. **No manual orders on it, ever** — its history must be 100% agent-generated, because that history is what judges read as "autonomous." `alpaca.py` + first tests: done. Save a live chain snapshot as the test fixture: done.
 
-**Sat 29 Aug** — market shut, commits still count. Empirically verified the core idempotency assumption live (a resubmitted duplicate `client_order_id` gets rejected, not duplicated) on the throwaway profile. Canonical-plan correctness fixes landed: `governance.json` + `risk.py` + `spread.py` + `alpaca.py` + the full test file — **done, 30/30 passing**. `market.py` + `brain.py` + `loop.py` next (`loop.py` is the largest remaining piece).
+**Sat 29 Aug** — market shut, commits still count. Empirically verified the core idempotency assumption live (a resubmitted duplicate `client_order_id` gets rejected, not duplicated) on the throwaway profile. Canonical-plan correctness fixes landed: `governance.json` + `risk.py` + `spread.py` + `alpaca.py` + the full test file — done, 30/30 passing at the time. Same day: `market.py`, `brain.py`, `loop.py`, and `.github/workflows/agent.yml` built via a 4-phase workflow; its adversarial verify pass caught 6 real `loop.py` defects (2 blocker) before anything was trusted, all fixed same-day — **44/44 passing**.
 
-**Sun 30 Aug** — `.github/workflows/agent.yml`; full `--dry-run` rehearsal; a live-gate sanity check (real SPY/QQQ chain + VIX data through the full gate stack, pass rate reviewed rather than assumed — over ~4 real entry windows this week, not 5, an ISM Manufacturing PMI release blacks out Tuesday morning). The upstream options-spreads skill PR stays deprioritized behind all of this, per the canonical plan's own priority call.
+**Sun 30 Aug** — full `--dry-run` rehearsal; a live-gate sanity check (real SPY/QQQ chain + VIX data through the full gate stack, pass rate reviewed rather than assumed — over ~4 real entry windows this week, not 5, an ISM Manufacturing PMI release blacks out Tuesday morning). The upstream options-spreads skill PR stays deprioritized behind all of this, per the canonical plan's own priority call.
 
 **Mon 31 Aug** — First autonomous cycle, first real spread (exactly 1 contract).
 **Tue 1 Sep** — `app.py` if time remains, deploy, verify the URL cold from outside.
@@ -299,7 +299,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 | Risk | Mitigation | Residual |
 |---|---|---|
-| Partial fill orphans a short leg | 2-leg only + 60s unwind + risk recomputed from filled qty | A fill between poll cycles |
+| Partial fill / naked leg after a cancel | Every cancel re-reads the order rather than assuming it won the race against a fill in flight; any resulting single-leg asymmetry (either side, entry or exit) HALTs and journals CRITICAL rather than being logged and ignored | No automated single-leg repair order — a human closes it manually; bounded by tick cadence (~5 min), not indefinite |
 | Overnight assignment → naked stock | Orphan handler flattens via explicit order next tick | Up to ~15 min unhedged |
 | Indicative quotes mis-price strikes | Limit only; recalibrated credit gate; quote-sanity gate; log quoted vs filled | P&L stays biased optimistic — reported as such |
 | Actions cron drifts or drops a run | Off-hour schedule, `workflow_dispatch`, staleness logging | A skipped session; loss cap is unaffected |
@@ -313,7 +313,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 16/16. Null greeks rejected; mleg body has `order_class="mleg"`, **`limit_price < 0`**, top-level `qty`, no top-level `symbol`/`side`, exactly 2 legs, correct sides/intents; `ratio_qty` GCD 1; sizing from max loss; delta band with no silent fallback; deadline blocks opens; cumulative drawdown halts; equity line flags as orphan.
+1. `pytest -q` — currently 44/44 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing) and `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing.

@@ -172,6 +172,34 @@ def test_ratio_qty_gcd_one():
         assert leg["ratio_qty"] == "1"
 
 
+def test_parse_chain_extracts_expiry_from_occ_symbol():
+    contracts = spread.parse_chain(REAL_CHAIN_SNAPSHOTS)
+    assert all(c.expiry == "2026-09-02" for c in contracts)
+
+
+def test_rank_candidates_never_crosses_expiries():
+    """A second, synthetic expiry (2026-09-09) reuses the exact same
+    strikes as the real chain. pick_spread must never pair a short leg
+    from one expiry with a same-strike long leg from the OTHER expiry —
+    that would silently build a calendar spread while claiming to be a
+    same-expiry vertical."""
+    later_expiry_snapshots = {
+        sym.replace("260902", "260909"): snap
+        for sym, snap in REAL_CHAIN_SNAPSHOTS.items()
+    }
+    contracts = spread.parse_chain(REAL_CHAIN_SNAPSHOTS) + spread.parse_chain(later_expiry_snapshots)
+    assert {c.expiry for c in contracts} == {"2026-09-02", "2026-09-09"}
+
+    ranked = spread.rank_candidates(
+        contracts, direction="bull_put", width=5,
+        delta_min=GOV["strategy"]["short_delta_min"], delta_max=GOV["strategy"]["short_delta_max"],
+        now=NOW,
+    )
+    assert len(ranked) == 2
+    for plan in ranked:
+        assert plan.short.expiry == plan.long.expiry == plan.expiry
+
+
 def test_client_order_id_deterministic():
     """The entire no-DB idempotency design leans on this: same inputs must
     always produce the same id, so a crashed-and-retried tick recomputes it
