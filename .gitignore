@@ -22,4 +22,15 @@ scratch/
 # NOTE: HALT is deliberately NOT ignored. It is the kill switch, and GitHub
 # Actions runs are stateless — the file only survives between ticks by being
 # committed. Same reason data/journal.jsonl is committed.
+
+# The SQLite read model IS ignored, for the opposite reason. It holds no fact
+# that data/journal.jsonl does not — `python store.py --rebuild` reproduces it
+# exactly — so committing it would put a binary blob in the path five people
+# rebase through while the Actions cron pushes the journal several times a day.
+# JSONL merges; a .db file does not. If this file is ever committed, the
+# journal has stopped being the single source of truth.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 .gstack/
