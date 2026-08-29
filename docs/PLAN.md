@@ -38,6 +38,7 @@ That document also specs a production-grade control system — Postgres with row
 - **Idempotency** comes from the broker, not a database: a deterministic (non-random) `client_order_id` per order, always looked up before submitting. Verified live 29 Aug 2026 — Alpaca rejects a resubmitted duplicate id with 422 `client_order_id must be unique` rather than creating a second order, which is the fact this whole mechanism leans on.
 - **Concurrency** is one GitHub Actions `concurrency:` group (`cancel-in-progress: false`) — a platform feature, not custom infra.
 - **Journal** is an append-only local JSONL, written incrementally (intent before every broker call, outcome after — not batched at tick end), git-committed.
+- **Queryable history** is SQLite (`store.py`), and only as a *derived read model* — `rebuild()` drops and replays `journal.jsonl` from line 1, so it cannot drift, and it is gitignored so nobody mistakes a committed binary for authority. It exists for the dashboard's aggregates (equity curve, "why no trade" by gate, decision log) and for a `chain_sha256` hash chain that makes an edited history detectable. It is deliberately **not** promoted to the primary store: a binary `.db` in the git-publish path would collide with the one durability mechanism this repo has — five people rebasing onto main while the cron commits the journal several times a day. JSONL merges and diffs; a `.db` does not.
 - **HALT** is a local flag file, checked at tick start.
 
 No Postgres/RLS, no OIDC/Sigstore attestation, no immutable-tag promotion, no branch-freeze ruleset, no chaos/race test suite, no 5-way workflow split — one `.github/workflows/agent.yml`.
@@ -92,7 +93,8 @@ GitHub Actions cron  ──▶  python loop.py --once      (:07 :22 :37 :52, 13:
         └─ 7. JOURNAL    append journal.jsonl → git commit → push
                                 │
                                 ▼
-                    Streamlit reads the committed journal. No database.
+                    Streamlit reads the committed journal, via store.py's
+                    SQLite read model (derived, gitignored, rebuilt on demand).
 ```
 
 The journal-commit-per-tick earns its keep three times: state for Streamlit, audit trail for the write-up, and genuine commit-spread evidence. lablab's guidance flags a single final push as a red flag.
@@ -253,7 +255,9 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 | `market.py` | State builder: bars → RV20, Cboe VIX-family CSV, chain, intraday move | ✅ built |
 | `brain.py` | The one bounded proposer call, read-only, scrubbed env, fail-closed validator | ✅ built |
 | `loop.py` | One tick: recovery/reconcile → exits → entry window → journal (the largest piece). Built by a 4-phase workflow whose adversarial 3-lens verify pass caught 6 real defects (2 blocker: dry_run didn't gate real cancels, no naked-leg/raced-fill handling existed) before anything was trusted — all 6 fixed directly, see the partial-fill note below. | ✅ built |
-| `app.py` | Streamlit dashboard | not yet — deprioritized behind the trading loop |
+| `store.py` | SQLite read model derived from the journal: events + hash chain, folded positions, gate-rejection and equity-curve queries. Rebuildable, gitignored. | ✅ built |
+| `test_store.py` | 27 tests — every query asserted against loop.py's own journal scan on identical input, plus chain tamper-detection and rebuild determinism | ✅ built, all passing |
+| `app.py` | Streamlit dashboard, reads `store.py` | not yet — the hosted demo URL is a hard submission gate |
 | `.github/workflows/agent.yml` | One workflow: cron + `workflow_dispatch` + one `concurrency:` group | ✅ built |
 | `env.example` | Documents the inverted `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE` trap, and `ALPACA_ACCOUNT_ID` (now required for `assert_paper` on the submission profile) | ✅ built |
 | `README.md` | The one-page write-up deliverable | not yet — Thursday |
@@ -261,7 +265,7 @@ Their backtest skill supports `stocks` and `crypto` only — options are explici
 | `social/drafts/` | Post drafts, PK posts manually from `@khaledalwaleed` | ✅ built, post 01 live |
 
 **Dependencies — three:** `claude-agent-sdk`, `streamlit`, `pytest`.
-**Not building:** a backtester, a database, parallel research agents, streaming, a second strategy.
+**Not building:** a backtester, a *primary* database (SQLite is a derived read model only — see above), parallel research agents, streaming, a second strategy.
 
 ---
 
@@ -314,7 +318,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 44/44 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing) and `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability).
+1. `pytest -q` — currently 71/71 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing. **Done, 29 Aug** — twice, `ok: true` both times; found and fixed a real gap along the way (`HALT.json` wasn't being git-published, so it would've been silently lost on an ephemeral CI runner).
