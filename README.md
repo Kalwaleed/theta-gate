@@ -8,7 +8,7 @@ This file is the getting-started guide and team workflow note. The full design d
 
 ## Status
 
-Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `governance.json`, `test_agent.py` (30/30), `data/events_2026-08-31_2026-09-04.json`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `market.py`, `brain.py`, `loop.py`, `app.py`, the GitHub Actions workflow. See the Repo layout table in `docs/PLAN.md` for the live checklist.
+Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `market.py`, `brain.py`, `loop.py`, `governance.json`, `data/events_2026-08-31_2026-09-04.json`, `.github/workflows/agent.yml` — 44/44 tests across `test_agent.py` and `test_loop.py`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Not yet built: `app.py` (deprioritized behind the trading loop). See the Repo layout table in `docs/PLAN.md` for the live checklist.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ git clone https://github.com/Kalwaleed/theta-gate.git
 cd theta-gate
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q                          # 30 passed
+pytest -q                          # 44 passed
 ```
 
 You'll also want the Alpaca CLI (`brew install alpacahq/tap/cli`) and your own paper API keys in a local `.env` (copy `env.example` — see the trap documented inside it before you touch `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE`). `ALPACA_ACCOUNT_ID` is now a hard requirement, not just documentation for judges — `alpaca.assert_paper()` refuses to trade the `submission` profile at all unless it's set and matches the live account, closing a gap where a config mistake could silently point `submission` at the wrong paper account.

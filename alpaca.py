@@ -110,15 +110,27 @@ def positions(profile="submission"):
     return _run("position", "list", profile=profile)
 
 
-def option_chain(underlying, expiration_date, option_type, strike_gte=None, strike_lte=None, profile="submission"):
+def option_chain(underlying, option_type, expiration_date=None, expiration_date_gte=None,
+                  expiration_date_lte=None, strike_gte=None, strike_lte=None, profile="submission"):
+    """Verified live 29 Aug 2026: --expiration-date-gte/-lte fetch every
+    listed expiry in a range in one call. loop.py uses the range form to
+    pull the whole 6-9 DTE window at once — spread.parse_chain now extracts
+    each contract's own expiry from its OCC symbol, so candidates across
+    multiple expiries can be ranked together (canonical plan Sec 6.2)
+    without a separate call per DTE."""
     assert_paper(profile)
     args = [
         "data", "option", "chain",
         "--underlying-symbol", underlying,
-        "--expiration-date", expiration_date,
         "--type", option_type,
         "--limit", "100",
     ]
+    if expiration_date is not None:
+        args += ["--expiration-date", expiration_date]
+    if expiration_date_gte is not None:
+        args += ["--expiration-date-gte", expiration_date_gte]
+    if expiration_date_lte is not None:
+        args += ["--expiration-date-lte", expiration_date_lte]
     if strike_gte is not None:
         args += ["--strike-price-gte", str(strike_gte)]
     if strike_lte is not None:
@@ -126,7 +138,10 @@ def option_chain(underlying, expiration_date, option_type, strike_gte=None, stri
     return _run(*args, profile=profile)
 
 
-def stock_bars(symbol, start, timeframe="1Day", limit=25, profile="submission"):
+def stock_bars(symbol, start, timeframe="1Day", limit=25, adjustment="all", profile="submission"):
+    """adjustment defaults to 'all' (split + cash-distribution), verified
+    live 29 Aug 2026 — canonical plan Sec 5.3: RV20 must be computed on
+    adjusted closes, or a stock split reads as a fake huge return."""
     assert_paper(profile)
     return _run(
         "data", "bars",
@@ -134,8 +149,17 @@ def stock_bars(symbol, start, timeframe="1Day", limit=25, profile="submission"):
         "--timeframe", timeframe,
         "--start", start,
         "--limit", str(limit),
+        "--adjustment", adjustment,
         profile=profile,
     )
+
+
+def latest_quote(symbol, profile="submission"):
+    """Live bid/ask + timestamp for spot — canonical plan Sec 5.4 wants spot
+    no more than 10s older than the newest option leg quote, which a daily
+    bar can never satisfy."""
+    assert_paper(profile)
+    return _run("data", "latest-quote", "--symbol", symbol, profile=profile)
 
 
 def get_order_by_client_id(client_order_id, profile="submission"):
@@ -154,7 +178,7 @@ def get_order(order_id, profile="submission"):
     return _run("order", "get", "--order-id", order_id, profile=profile)
 
 
-def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", profile="submission"):
+def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", dry_run=False, profile="submission"):
     """Submit a multi-leg options order. `limit_price` sign is the caller's
     responsibility — negative for a net credit, positive for a net debit.
 
@@ -185,6 +209,8 @@ def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", 
         "--client-order-id", client_order_id,
         "--legs", json.dumps(legs),
     ]
+    if dry_run:
+        args.append("--dry-run")
     return _run(*args, profile=profile)
 
 

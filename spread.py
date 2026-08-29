@@ -10,6 +10,9 @@ deterministic.
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,7 @@ class Contract:
     bid: float
     ask: float
     quote_ts: float | None = None  # unix seconds, from the chain snapshot's latestQuote.t
+    expiry: str = ""  # "YYYY-MM-DD", parsed from the OCC symbol itself
 
     @property
     def mid(self):
@@ -59,12 +63,13 @@ def parse_chain(raw_snapshots: dict) -> list[Contract]:
             iv=snap.get("impliedVolatility"),
             bid=bid,
             ask=ask,
-            quote_ts=_parse_quote_ts(quote.get("t")),
+            quote_ts=parse_quote_ts(quote.get("t")),
+            expiry=_expiry_from_occ(symbol),
         ))
     return contracts
 
 
-def _parse_quote_ts(raw: str | None) -> float | None:
+def parse_quote_ts(raw: str | None) -> float | None:
     """latestQuote.t is an RFC3339 UTC string with sub-microsecond precision
     (e.g. '2026-08-28T19:59:56.711359584Z') — verified live 29 Aug 2026.
     Python's fromisoformat truncates the extra digits rather than erroring."""
@@ -74,6 +79,14 @@ def _parse_quote_ts(raw: str | None) -> float | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _expiry_from_occ(symbol: str) -> str:
+    """The 6 digits right before the P/C flag (which is right before the
+    8-digit strike) are YYMMDD — works regardless of underlying symbol
+    length, e.g. 'SPY260902P00754000' -> '2026-09-02'."""
+    yymmdd = symbol[-15:-9]
+    return f"20{yymmdd[0:2]}-{yymmdd[2:4]}-{yymmdd[4:6]}"
 
 
 def _strike_from_occ(symbol: str) -> float:
@@ -115,7 +128,15 @@ def pick_spread(
     else:
         raise ValueError(f"unknown direction: {direction}")
 
-    long_candidates = [c for c in contracts if math.isclose(c.strike, long_strike, abs_tol=0.01)]
+    # Same-expiry only: `contracts` may span multiple expiries (rank_candidates
+    # passes the whole DTE-range fetch through here per expiry group, but a
+    # caller could pass an unfiltered multi-expiry list) — without this filter
+    # a same-strike contract from a DIFFERENT expiry could silently become the
+    # long leg of a calendar-mismatched "vertical".
+    long_candidates = [
+        c for c in contracts
+        if c.expiry == short.expiry and math.isclose(c.strike, long_strike, abs_tol=0.01)
+    ]
     if not long_candidates:
         return None
     long = long_candidates[0]
@@ -127,7 +148,7 @@ def pick_spread(
     return SpreadPlan(
         underlying="",  # filled in by the caller, which knows the underlying
         direction=direction,
-        expiry="",      # filled in by the caller from the requested expiration
+        expiry=short.expiry,
         short=short,
         long=long,
         width=width,
@@ -135,6 +156,58 @@ def pick_spread(
         qty=0,           # sized by risk.size_position, not here
         max_loss_dollars=round((width - credit) * 100, 2),
     )
+
+
+def friction_ratio(plan: SpreadPlan) -> float:
+    """Canonical plan Sec 5.5: natural vs optimistic credit — a diagnostic,
+    used here only to RANK passing candidates, never to gate one (risk.py's
+    gate_quote_sanity + gate_credit_quality already gate quote quality from
+    two angles; this is deliberately not a third overlapping gate)."""
+    natural = plan.short.bid - plan.long.ask
+    optimistic = plan.short.ask - plan.long.bid
+    mid = (natural + optimistic) / 2
+    if mid <= 0:
+        return math.inf
+    return (optimistic - natural) / mid
+
+
+def rank_candidates(
+    contracts: list[Contract], direction: str, width: float,
+    delta_min: float, delta_max: float, now: datetime,
+) -> list[SpreadPlan]:
+    """Canonical plan Sec 6.2: build every valid vertical across every
+    expiry present in `contracts` (a single option_chain call across the
+    whole DTE range, not one call per expiry), then rank deterministically:
+    lowest friction_ratio -> delta closest to the band midpoint -> largest
+    calendar DTE -> short OCC symbol -> long OCC symbol. Returns candidates
+    best-first; the caller (loop.py) still runs risk.check_all on each in
+    order and takes the first that passes every gate — this only decides
+    the order gates are tried in, never bypasses them."""
+    by_expiry: dict[str, list[Contract]] = {}
+    for c in contracts:
+        by_expiry.setdefault(c.expiry, []).append(c)
+
+    candidates = []
+    for group in by_expiry.values():
+        plan = pick_spread(group, direction=direction, width=width, delta_min=delta_min, delta_max=delta_max)
+        if plan is not None:
+            candidates.append(plan)
+
+    target_delta = (delta_min + delta_max) / 2
+    now_date = now.astimezone(ET).date()
+
+    def sort_key(plan: SpreadPlan):
+        dte = (datetime.strptime(plan.expiry, "%Y-%m-%d").date() - now_date).days
+        return (
+            friction_ratio(plan),
+            abs(abs(plan.short.delta) - target_delta),
+            -dte,  # largest DTE first
+            plan.short.symbol,
+            plan.long.symbol,
+        )
+
+    candidates.sort(key=sort_key)
+    return candidates
 
 
 def client_order_id(purpose: str, trade_date: str, window: str, underlying: str, stage: str) -> str:
