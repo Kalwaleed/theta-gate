@@ -1,3 +1,5 @@
 {"ts": "2026-08-29T08:30:47.570104-04:00", "event": "not_paper_abort", "level": "critical", "profile": "submission", "error": "ALPACA_ACCOUNT_ID is not set \u2014 refusing to trade the submission profile blind"}
 {"ts": "2026-08-29T08:31:24.532090-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-08-29T08:31:24.532950-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-08-29T08:33:03.707902-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-08-29T08:33:03.708569-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
