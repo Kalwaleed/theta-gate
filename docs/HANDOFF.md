@@ -33,7 +33,9 @@ Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,00
 
 ## Do this next
 
-**1. Re-run the rehearsal any time you change a secret or the workflow.**
+**1. Close PR #2 — it is the only open PR and it should not be merged.** "feat: add theta-gate ECC bundle", authored by the `app/ecc-tools` GitHub App, not a team member. It touches no `.py`, no `.github/`, no `governance.json` (verified three ways), and `brain.py`'s `setting_sources=[]` means the trading loop could not load it even if merged — so this is a cost/benefit call, not a security incident. Decline it because it adds zero trading functionality six days from submission while configuring five MCP servers via unpinned `npx -y <pkg>@latest` plus a live remote endpoint (`mcp.exa.ai`) in `.codex/config.toml`. Its generated skill also instructs agents to use PascalCase filenames and TypeScript idioms in what is a snake_case Python repo, from "1 analyzed commits" — guidance wrong about the repo's own language, carrying `allow_implicit_invocation: true`. Full reasoning is posted as a comment on the PR.
+
+**2. Re-run the rehearsal any time you change a secret or the workflow.**
 
 ```bash
 gh workflow run "Theta Gate Agent" --repo Kalwaleed/theta-gate -f dry_run=true
@@ -43,7 +45,7 @@ gh run view <run-id> --repo Kalwaleed/theta-gate --log | grep -E "API_KEY:"
 
 Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. Expect `ok: true`, `entry.attempted: false`, a new `theta-gate-agent[bot]` journal commit, and every `*_API_KEY` rendering as `***`.
 
-**2. Monday during market hours — finish the gate verification.** The weekend live check confirmed gates fire in the right order, but only up to `gate_delta_band`: no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08 in low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. Re-run the checker once the market is open:
+**3. Monday during market hours — finish the gate verification.** The weekend live check confirmed gates fire in the right order, but only up to `gate_delta_band`: no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08 in low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. Re-run the checker once the market is open:
 
 ```bash
 set -a; source .env; set +a
@@ -52,9 +54,9 @@ PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py
 
 It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but is strictly read-only — no journal writes, no git, no order submission. It *does* make one real `brain.propose()` call, so it costs an Anthropic API call per run.
 
-**3. Deploy the dashboard to Streamlit Community Cloud.** `app.py` is merged but not hosted, and the demo URL is a hard submission gate — no URL, entry not judged. Two things to know before it goes public: `.streamlit/config.toml` now sets `showErrorDetails = "none"` (the repo is private, the URL will not be — don't remove it), and `store.connect()`/`rebuild()` has no locking, so confirm several simultaneous cold loads don't race on the SQLite rebuild before handing the link to judges.
+**4. Deploy the dashboard to Streamlit Community Cloud.** `app.py` is merged but not hosted, and the demo URL is a hard submission gate — no URL, entry not judged. Two things to know before it goes public: `.streamlit/config.toml` now sets `showErrorDetails = "none"` (the repo is private, the URL will not be — don't remove it), and `store.connect()`/`rebuild()` has no locking, so confirm several simultaneous cold loads don't race on the SQLite rebuild before handing the link to judges.
 
-**4. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
+**5. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
 
 ---
 
@@ -72,6 +74,7 @@ It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but i
   ```
 - **Interactive `gh secret set` does not work from Claude Code's `!` prompt.** stdin isn't a TTY there, so `gh` reads nothing and silently stores an empty value. Use the piped form above, a real terminal, or the GitHub web UI.
 - **`gh secret list` cannot tell an empty secret from a populated one.** Both show name + timestamp; `gh secret set` prints nothing either way. The only reliable check is a workflow run: a populated secret renders as `***` in the log's env dump, an empty one renders blank. This is the single highest-value verification in the whole setup — it is how the empty key was caught at all.
+- **The docs described things that were never built, and one wrong fact appeared three times.** `docs/PLAN.md` claimed MCP-based perception and a second-pass critic re-verifying delta and credit; neither shipped (`brain.py` runs `tools=[]`, `mcp_servers={}`, `max_turns=1`, and there is no critic anywhere). It also said the agent executes via `api POST /v2/orders` — it does not; `submit_mleg` shells out to `order submit --order-class mleg` (`alpaca.py:207-215`), and `api POST` is a raw passthrough this codebase never calls. Both are corrected. The lesson for Thursday's write-up: **grep the claim against the code before it ships to judges**, and when a wrong fact turns up, grep for every other copy of it — that one appeared in the architecture diagram, the CLI summary, and the integration section.
 
 ---
 
@@ -81,6 +84,7 @@ It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but i
 - **No automated single-leg repair.** If a cancel loses the race against a fill and leaves one leg naked, `loop.py` sets HALT and journals CRITICAL — a human closes it. `alpaca.py` has no single-leg order primitive, and building one untested days before the deadline is its own risk. Detection is thorough; remediation is manual.
 - **Orphan equity (overnight assignment) is detected, not flattened.** Same reason — no stock-order primitive in `alpaca.py`. Blocks entries, journals CRITICAL.
 - **A failed `git push` loses that tick's local writes.** Now loud (tick returns `ok: false`, non-zero exit, red Actions run) rather than silent, but not recovered.
+- **`store.connect()`/`rebuild()` has no locking** (`store.py:317`, `:331`). Two concurrent callers hitting a missing or stale `.db` can race on create/unlink and raise an uncaught `sqlite3.OperationalError`. Nothing hits it concurrently today — but the deployed dashboard will, since Streamlit Community Cloud can serve several judges at once and a cold session may trigger a rebuild. Confined to the read model; the journal is never written from there, so the trading path cannot be affected. Test before the demo URL is public.
 
 ---
 
