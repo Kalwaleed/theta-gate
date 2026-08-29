@@ -1,8 +1,8 @@
 # Handoff — Theta Gate
 
-**Written Sat 29 Aug 2026, 10:55 ET.** State of the build at commit `ff0c3a2`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Written Sat 29 Aug 2026, 11:25 ET**, after the first successful GitHub Actions rehearsal. State of the build at commit `c29231b`, `main`, pushed and in sync with `origin`. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
-Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts.
+Read this first, then `docs/PLAN.md` (design + timeline) and `docs/THETA_GATE_CANONICAL_PLAN.md` (strategy authority). This file covers only what a fresh session needs to resume, and is written to go stale — update or delete it once trading starts. **Verify the state below rather than trusting it** (`git log --oneline -5`, `pytest -q`); if it disagrees with the repo, the repo is right.
 
 ---
 
@@ -16,12 +16,15 @@ Every file in the trading path is built, tested, and committed. **45/45 tests pa
 | `market.py`, `brain.py`, `loop.py` | Built, tested |
 | `.github/workflows/agent.yml` | Built; cron every 5 min, weekdays, 09:30–16:00 ET |
 | `governance.json`, event calendar | Built |
+| `scripts/live_gate_check.py` | Built; read-only diagnostic, mirrors the entry pipeline |
 | `app.py` (Streamlit dashboard) | **Not built** — Tuesday, does not block trading |
 | `README.md` write-up for judges | **Not built** — Thursday, needs real trading history |
 
 GitHub config: `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` are set correctly; `ALPACA_ACCOUNT_ID` is a **variable**, not a secret — the workflow reads it via `vars.`, which matters (see gotchas). **`ANTHROPIC_API_KEY` exists but is EMPTY — fix before Monday, see below.**
 
-The workflow itself is proven end to end: a `workflow_dispatch` rehearsal ran green on the real runner Sat 29 Aug 11:15 ET (run `33259706303`, 46s) — checkout, Python 3.14, pinned Alpaca CLI 0.0.13, `assert_paper`, live broker reads, and a journal commit pushed to `main` as `theta-gate-agent[bot]`. Returned `ok: true`, `entry.attempted: false` (weekend, correctly short-circuited).
+The workflow itself is proven end to end: a `workflow_dispatch` rehearsal ran green on the real runner Sat 29 Aug 11:15 ET (run `33259706303`, 46s) — checkout, Python 3.14, pinned Alpaca CLI 0.0.13, `assert_paper` against the real account, live broker reads, and `_git_publish` committing and pushing the journal to `main` as `theta-gate-agent[bot]`. Returned `ok: true`, `entry.attempted: false` (weekend, correctly short-circuited). That run is what proves the CI half of durability: until it, `_git_publish` had only ever been exercised on a local machine, never from an ephemeral runner where a lost push actually costs state.
+
+Two harmless observations from that run, noted so nobody re-investigates them: the runner resolves Python **3.14.7** against the local venv's 3.14.6 (patch drift, `python-version: "3.14"` is intentionally not pinned tighter), and GitHub annotates the run with a **Node 20 deprecation warning** for `actions/checkout@v4` / `actions/setup-python@v5` — both are forced onto Node 24 and work fine. Neither is a failure; both will keep appearing.
 
 Account: fresh paper account, id `7a013821-9249-4505-8025-fb298f0931a5`, $100,000, zero positions, zero orders, zero manual trades. **Never place a manual order on it** — its history is the judges' evidence the agent is autonomous.
 
@@ -49,11 +52,14 @@ gh run view <run-id> --repo Kalwaleed/theta-gate --log | grep "ANTHROPIC_API_KEY
 
 Safe on a weekend: `_current_entry_window` returns `None` Sat/Sun, so the entry pipeline short-circuits — no billed LLM call, no order path. Expect `ok: true`, `entry.attempted: false`, a new `theta-gate-agent[bot]` journal commit, and `ANTHROPIC_API_KEY: ***`.
 
-**3. Monday during market hours — finish the gate verification (task #6).** Sunday's live check confirmed gates fire in the right order, but only up to `gate_delta_band`: on the weekend snapshot no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08, low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. A standalone read-only checker was used for this; rewrite it as needed — it wrote nothing and committed nothing:
+**3. Monday during market hours — finish the gate verification.** The weekend live check confirmed gates fire in the right order, but only up to `gate_delta_band`: no candidate reached the 0.16–0.25 delta band (real deltas were 0.04–0.08 in low-vol conditions), so `credit_quality`, `minimum_credit`, `quote_sanity`, `vrp_present` and the three sized gates have **never fired on a real qualifying candidate**. Re-run the checker once the market is open:
 
+```bash
+set -a; source .env; set +a
+PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py
 ```
-/Users/papasmurf/.claude/jobs/94b00c5f/tmp/live_gate_check.py   # ephemeral, may be gone
-```
+
+It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but is strictly read-only — no journal writes, no git, no order submission. It *does* make one real `brain.propose()` call, so it costs an Anthropic API call per run.
 
 **4. Watch the first live entry closely.** Two things are still unverified against a real fill, because no fill has ever happened: the **sign convention** on `filled_avg_price` (`_extract_actual_price` in `loop.py` assumes it mirrors `limit_price`'s negative-is-credit convention), and `_map_account_state`'s Alpaca field names. Both are disclosed in code comments.
 
