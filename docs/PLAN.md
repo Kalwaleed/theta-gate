@@ -89,7 +89,7 @@ GitHub Actions cron  ──▶  python loop.py --once      (:07 :22 :37 :52, 13:
         │       ├─ RESOLVE   pure Python             → target delta ⇒ real OCC symbols from live chain
         │       └─ GUARD     pure Python, no LLM     → first rejection wins, and is final
         │
-        ├─ 6. EXECUTE    alpaca api POST /v2/orders  (mleg, 2 legs, limit, client_order_id)
+        ├─ 6. EXECUTE    alpaca order submit --order-class mleg  (2 legs, limit, client_order_id)
         └─ 7. JOURNAL    append journal.jsonl → git commit → push
                                 │
                                 ▼
@@ -105,7 +105,7 @@ The journal-commit-per-tick earns its keep three times: state for Streamlit, aud
 
 ### The Alpaca integration is the CLI — corrected 29 Aug 2026
 
-**As built, the agent talks to Alpaca through the CLI only.** `alpaca.py` shells out to the `alpaca` binary for every broker call — `clock`, `account get`, `position list`, `data option chain`, `data stock-bars`, `data latest-quote`, `order get`/`get-by-client-id`/`list`/`cancel`, and `api POST /v2/orders` for the 2-leg `mleg`. That satisfies the hackathon's second hard gate (MCP **or** CLI; the plain REST SDK does not count), and `alpaca-py` is excluded from `requirements.txt` on purpose.
+**As built, the agent talks to Alpaca through the CLI only.** `alpaca.py` shells out to the `alpaca` binary for every broker call — `clock`, `account get`, `position list`, `data option chain`, `data stock-bars`, `data latest-quote`, `order get`/`get-by-client-id`/`list`/`cancel`, and `order submit --order-class mleg` for the 2-leg vertical (`alpaca.py:207-215`). That satisfies the hackathon's second hard gate (MCP **or** CLI; the plain REST SDK does not count), and `alpaca-py` is excluded from `requirements.txt` on purpose.
 
 **An earlier draft of this section described MCP as "the agent's perception" — proposer and critic calling `get_news`, `get_market_movers`, `get_option_snapshot`, with the critic re-verifying delta and credit from a fresh snapshot. None of that shipped, and this section previously claimed it did.** What `brain.py` actually does (lines 235-244):
 
@@ -125,7 +125,7 @@ Zero tools, zero MCP servers, one turn, and no filesystem/user/project settings.
 
 **`.mcp.json` in the repo root is developer tooling, not the agent's runtime.** It configures `uvx alpaca-mcp-server` for a human's Claude Code session while working on this repo. `brain.py` never reads it — `mcp_servers={}` plus `strict_mcp_config=True` is precisely what guarantees that.
 
-**CLI is the deterministic hands.** `clock`, `account get`, `position list`, `data option chain`, `api POST /v2/orders`, plus explicit single-symbol closes — never a bulk operation. See "Constraints adopted from Alpaca's own skills" below.
+**CLI is the deterministic hands.** `clock`, `account get`, `position list`, `data option chain`, `order submit --order-class mleg`, plus explicit single-symbol closes — never a bulk operation. See "Constraints adopted from Alpaca's own skills" below.
 
 Bonus: the MCP server ships `search_alpaca_docs` / `get_alpaca_endpoint_docs` as always-on tools — authoritative Alpaca docs, better than any general docs MCP for this API.
 
@@ -340,7 +340,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 94/94 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism) and `test_app.py` (dashboard geometry and full-page render).
+1. `pytest -q` — currently 96/96 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism) and `test_app.py` (dashboard geometry and full-page render).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing. **Done, 29 Aug** — twice, `ok: true` both times; found and fixed a real gap along the way (`HALT.json` wasn't being git-published, so it would've been silently lost on an ephemeral CI runner).

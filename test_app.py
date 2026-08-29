@@ -297,3 +297,17 @@ def test_page_shows_a_halt(tmp_path, monkeypatch):
     _, body = _run_app(staged, monkeypatch)
     assert "halted" in body
     assert "history verified" not in body
+
+
+def test_corrupt_halt_file_fails_closed_without_crashing(tmp_path, monkeypatch):
+    """loop.py rewrites HALT.json mid-tick while the dashboard reads it from
+    another process, so a torn read is reachable in normal operation -- and
+    the demo URL is public even though the repo is private. Unreadable must
+    render as halted, matching loop.py._check_halt's own fail-closed rule,
+    rather than raising and taking the page down in front of judges."""
+    staged = _stage(tmp_path, [{"ts": "2026-09-01T10:00:00-04:00",
+                                "event": "tick_completed", "ok": True}])
+    (staged / "data" / "HALT.json").write_text('{"active": tr', encoding="utf-8")
+    _, body = _run_app(staged, monkeypatch)  # must not raise
+    assert "halted" in body
+    assert "history verified" not in body
