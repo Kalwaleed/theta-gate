@@ -95,9 +95,14 @@ def assert_paper(profile="submission"):
             )
 
 
-def clock():
-    assert_paper()
-    return _run("clock")
+def clock(profile="submission"):
+    """Takes `profile` like every other function here. It previously
+    asserted the default profile but then ran against whatever
+    ALPACA_PROFILE happened to be ambient — the exact split this module's
+    _profile_env() exists to prevent, missed because nothing calls this
+    yet. Fixed before something does."""
+    assert_paper(profile)
+    return _run("clock", profile=profile)
 
 
 def account(profile="submission"):
