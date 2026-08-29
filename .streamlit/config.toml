@@ -1,0 +1,22 @@
+# Streamlit Community Cloud reads this on deploy.
+#
+# The palette matches docs/diagrams/*.html so the demo, the diagrams and the
+# deck read as one artifact. app.py overrides most of Streamlit's chrome in
+# CSS anyway; these values set what CSS cannot reach -- the pre-render
+# background, so a cold load flashes paper rather than white, and the theme
+# the loading skeleton is drawn in.
+
+[theme]
+base = "light"
+primaryColor = "#3F2AC1"
+backgroundColor = "#F5F5F5"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0B0D0F"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+# Never phone home from the judges' demo URL.
+gatherUsageStats = false
