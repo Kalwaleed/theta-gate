@@ -40,3 +40,27 @@ data/*.db-shm
 # absolute home-directory paths and transcript UUIDs from whoever ran it.
 # It served no purpose in the repo and this one is going public.
 .memsearch/
+
+# --- Agent and tooling state -------------------------------------------
+# Written by whatever assistant a teammate happens to run, at whatever
+# depth they run it from -- .omc/ already appears at the repo root AND
+# inside deck/. No leading slash, so this matches at any depth.
+.omc/
+
+# Claude Code writes per-machine permission overrides here. The shared
+# .claude/settings.json IS committed on purpose (it is the read-only
+# allowlist the whole team relies on); the .local. one is personal.
+.claude/settings.local.json
+
+# --- Build artifacts ----------------------------------------------------
+# deck/: LaTeX intermediates. theta-gate.pdf itself IS committed -- it is a
+# submission deliverable and teammates and judges need it without a TeX
+# install. Same for cover/cover.png. Everything below regenerates.
+deck/*.aux
+deck/*.log
+deck/*.nav
+deck/*.out
+deck/*.snm
+deck/*.toc
+deck/*.vrb
+deck/build/
