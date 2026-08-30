@@ -340,7 +340,7 @@ Commit and push daily — a single final push reads as pre-built and is flagged 
 
 ## Verification
 
-1. `pytest -q` — currently 96/96 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism) and `test_app.py` (dashboard geometry and full-page render).
+1. `pytest -q` — currently 107/107 across `test_agent.py` (gates, mleg body shape, idempotency, chain parsing), `test_loop.py` (journal round-trip, HALT fail-closed, dry-run cancel gating, leg-symmetry/naked-leg HALT, exit attempt-id stability), and `test_store.py` (read-model parity with loop.py, hash chain, rebuild determinism) and `test_app.py` (dashboard geometry and full-page render).
 2. `alpaca doctor` reports `https://paper-api.alpaca.markets`. Every session, non-negotiable.
 3. `alpaca order submit --dry-run` before any live submit.
 4. One full `loop.py --once --dry-run` that logs and sends nothing. **Done, 29 Aug** — twice, `ok: true` both times; found and fixed a real gap along the way (`HALT.json` wasn't being git-published, so it would've been silently lost on an ephemeral CI runner).
