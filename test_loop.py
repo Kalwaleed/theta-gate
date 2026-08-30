@@ -542,3 +542,25 @@ def test_run_tick_guarded_publishes_on_not_paper_abort():
         summary = loop._run_tick_guarded(datetime(2026, 8, 31, 10, 31, tzinfo=ET), False, "submission")
     pub.assert_called_once()
     assert summary["ok"] is False and summary["aborted_at"] == "assert_paper"
+
+
+# --- 30 Aug 2026 review hardening ------------------------------------------
+
+def test_fresh_close_quotes_tolerates_zero_bid_long_leg():
+    snaps = {
+        "SPY260908P00700000": {"latestQuote": {"bp": 0.40, "ap": 0.50, "t": "2026-09-03T18:30:00Z"}, "greeks": {"delta": -0.1}},
+        "SPY260908P00695000": {"latestQuote": {"bp": 0, "ap": 0.05, "t": "2026-09-03T18:30:00Z"}, "greeks": {"delta": -0.05}},
+    }
+    with patch("loop.alpaca.option_chain", return_value={"snapshots": snaps}):
+        short_c, long_c = loop._fresh_close_quotes("SPY", "2026-09-08", "SPY260908P00700000", "SPY260908P00695000", "submission")
+    assert short_c.mid == 0.45 and long_c.bid == 0.0 and long_c.ask == 0.05
+
+
+def test_run_tick_guarded_marks_git_exception_as_publish_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    now = datetime(2026, 8, 31, 10, 31, tzinfo=ET)
+    with patch("loop._run_tick_body", return_value={"ok": True, "now": now.isoformat()}), \
+         patch("loop._git_publish", return_value={"committed": False, "error": "TimeoutExpired: git push"}):
+        summary = loop._run_tick_guarded(now, False, "submission")
+    assert summary["ok"] is False
+    assert any(e["event"] == "journal_publish_failed" for e in loop._read_journal())

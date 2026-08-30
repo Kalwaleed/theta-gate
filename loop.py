@@ -420,13 +420,16 @@ def _fresh_close_quotes(underlying, expiry, short_symbol, long_symbol, profile):
     Windowed to the two leg strikes (+/- 0.50): verified live 30 Aug 2026
     that the old unwindowed --limit 100 page could omit a leg, which made
     this raise and the exit (Thursday's flatten included) silently skip as
-    exit_quote_unavailable."""
+    exit_quote_unavailable. A leg with bid 0.00 is kept (allow_zero_bid):
+    a far-OTM long leg late in its life is still closable -- it is sold at
+    whatever the market pays -- and an unquotable open position is worse
+    than a pessimistic mid."""
     strikes = [spread._strike_from_occ(short_symbol), spread._strike_from_occ(long_symbol)]
     chain = alpaca.option_chain(
         underlying, option_type="put", expiration_date=expiry,
         strike_gte=min(strikes) - 0.5, strike_lte=max(strikes) + 0.5, profile=profile,
     )
-    contracts = {c.symbol: c for c in spread.parse_chain(chain.get("snapshots", {}))}
+    contracts = {c.symbol: c for c in spread.parse_chain(chain.get("snapshots", {}), allow_zero_bid=True)}
     short_c, long_c = contracts.get(short_symbol), contracts.get(long_symbol)
     if short_c is None or long_c is None:
         raise market.MarketDataError(f"{underlying}: could not fetch fresh quotes for {short_symbol}/{long_symbol}")
@@ -1070,7 +1073,10 @@ def _run_tick_guarded(now, dry_run, profile):
     # non-zero (a red GitHub Actions run a human notices) and, once this
     # event DOES reach a future successful push, consecutive_exceptions
     # sees it too.
-    publish_failed = bool(git_result.get("committed")) and not git_result.get("pushed")
+    # "error" covers a git subprocess that raised AFTER the commit (a push
+    # timeout): _git_publish reports committed=False then, and the tick
+    # would otherwise go green with its commit stranded on the runner.
+    publish_failed = bool(git_result.get("error")) or (bool(git_result.get("committed")) and not git_result.get("pushed"))
     if publish_failed:
         _append_journal("journal_publish_failed", level="critical", git_result=git_result,
                          note="journal committed locally but push failed -- this runner's state may "

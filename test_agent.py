@@ -744,3 +744,45 @@ def test_submit_mleg_returns_rejection_body():
 def test_cancel_order_returns_empty_dict_on_204():
     with _no_paper(), patch("alpaca.subprocess.run", _cli(0, "{}", "")):
         assert alpaca.cancel_order("1ee5812d") == {}
+
+
+# --- 30 Aug 2026 review hardening: CLI parse edge cases, chain page cap ----
+
+def _cp(returncode, stdout="", stderr=""):
+    import subprocess as _sp
+    return _sp.CompletedProcess(["alpaca"], returncode, stdout, stderr)
+
+
+def test_run_ignores_trailing_text_after_error_json():
+    body = '{"code": 40410000, "error": "order not found for x", "status": 404}\nhint: run alpaca doctor\n'
+    with patch("alpaca.subprocess.run", return_value=_cp(1, "", body)):
+        assert alpaca._run("order", "get", allow_error=True)["status"] == 404
+
+
+def test_get_order_by_client_id_hit_without_id_raises(monkeypatch):
+    monkeypatch.setattr(alpaca, "assert_paper", lambda profile="submission": None)
+    for stdout in ("{}", '{"message": "too many requests", "status": 429}'):
+        with patch("alpaca.subprocess.run", return_value=_cp(0, stdout, "")):
+            with pytest.raises(alpaca.AlpacaCLIError):
+                alpaca.get_order_by_client_id("tg-e-x")
+
+
+def test_option_chain_raises_when_page_cap_is_exhausted(monkeypatch):
+    monkeypatch.setattr(alpaca, "assert_paper", lambda profile="submission": None)
+    endless = {"snapshots": {"SPY260908P00700000": {}}, "next_page_token": "more"}
+    with patch.object(alpaca, "_run", return_value=endless) as run_mock:
+        with pytest.raises(RuntimeError, match="exceeded"):
+            alpaca.option_chain("SPY", "put", expiration_date="2026-09-08")
+    assert run_mock.call_count == 20
+
+
+def test_parse_chain_keeps_zero_bid_only_when_allowed():
+    snaps = {
+        "SPY260908P00695000": {"latestQuote": {"bp": 0, "ap": 0.05, "t": "2026-08-28T19:59:56Z"}, "greeks": {"delta": -0.05}},
+        "SPY260908P00700000": {"latestQuote": {"bp": 0.4, "ap": 0.5, "t": "2026-08-28T19:59:56Z"}, "greeks": {"delta": -0.1}},
+        "SPY260908P00690000": {"latestQuote": {"bp": 0.1, "ap": None, "t": "2026-08-28T19:59:56Z"}},  # no ask: never kept
+    }
+    assert [c.symbol for c in spread.parse_chain(snaps)] == ["SPY260908P00700000"]
+    kept = {c.symbol: c for c in spread.parse_chain(snaps, allow_zero_bid=True)}
+    assert set(kept) == {"SPY260908P00695000", "SPY260908P00700000"}
+    assert kept["SPY260908P00695000"].bid == 0.0 and kept["SPY260908P00695000"].mid == 0.025
