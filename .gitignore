@@ -37,3 +37,15 @@ data/*.db-shm
 
 # memsearch plugin index and session notes -- local only, never published
 .memsearch/
+
+# LaTeX build artifacts (deck/). theta-gate.pdf itself IS committed -- it is
+# a submission deliverable, and teammates and judges need it without a TeX
+# install. Same for cover/cover.png. Everything below regenerates via `make`.
+deck/*.aux
+deck/*.log
+deck/*.nav
+deck/*.out
+deck/*.snm
+deck/*.toc
+deck/*.vrb
+deck/build/
