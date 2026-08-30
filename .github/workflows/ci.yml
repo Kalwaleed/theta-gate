@@ -1,0 +1,23 @@
+name: Tests
+
+# pytest never ran anywhere but a laptop before this. The agent's journal
+# commits touch only data/, so they are excluded -- otherwise every 5-minute
+# tick would queue a test run.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["data/**", "docs/**", "social/**", "deck/**", "cover/**"]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - run: python3 -m pytest -q
