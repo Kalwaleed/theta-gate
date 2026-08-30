@@ -1,0 +1,78 @@
+name: Flip repo public
+
+# Runs on GitHub's infrastructure, independent of any laptop or Claude
+# session -- unlike a session-bound scheduler, this fires even if nobody is
+# watching. Scheduled 30 Aug 2026 by PK: flip Kalwaleed/theta-gate from
+# private to public on Thu 3 Sep, after that day's write-up and the deck/cover
+# PRs (#11, #12) are expected to be merged with real numbers, one day ahead
+# of the Fri 4 Sep 11:00 ET submission deadline.
+#
+# Idempotent by design (checks current visibility first) so a stray re-run,
+# or this cron recurring next year on a repo nobody's touching, is a no-op.
+
+on:
+  schedule:
+    # 17:00 ET Thu 3 Sep == 21:00 UTC (this week is EDT, UTC-4). Offset a
+    # few minutes off the hour, same reasoning as agent.yml's cadence --
+    # avoid the exact top-of-hour instant every world-wide cron job targets.
+    - cron: "3 21 3 9 *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run -- report what would happen, don't actually flip visibility"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read # nothing is written to the repo; the visibility change goes through the REPO_ADMIN_PAT below
+
+jobs:
+  flip:
+    name: Flip visibility to public
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # The built-in GITHUB_TOKEN cannot change repo visibility -- that's a
+      # hard GitHub platform restriction on administrative settings, not a
+      # `permissions:` config choice. This needs a fine-grained PAT, scoped
+      # to ONLY this repo and ONLY "Administration: write"
+      # (github.com/settings/personal-access-tokens/new), stored as the
+      # REPO_ADMIN_PAT secret. That scope can flip visibility, delete
+      # branches, and manage repo settings -- nothing else: no code access,
+      # no other repos, no org-wide reach.
+      GH_TOKEN: ${{ secrets.REPO_ADMIN_PAT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check current visibility
+        id: vis
+        run: |
+          CURRENT=$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq '.visibility')
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Current visibility: $CURRENT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sanity read -- recent commits and open PRs
+        run: |
+          {
+            echo "### Repo state at flip time"
+            echo '```'
+            git log --oneline -5
+            echo '```'
+            echo "Open PRs:"
+            gh pr list --repo "$GITHUB_REPOSITORY" --state open
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Flip to public
+        if: steps.vis.outputs.current != 'PUBLIC'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "DRY RUN -- would flip to public, no change made." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh repo edit "$GITHUB_REPOSITORY" --visibility public --accept-visibility-change-consequences
+          echo "Flipped to public." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already public -- nothing to do
+        if: steps.vis.outputs.current == 'PUBLIC'
+        run: echo "Already public -- no action taken." >> "$GITHUB_STEP_SUMMARY"
