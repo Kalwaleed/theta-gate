@@ -435,3 +435,56 @@ def test_cli_rebuild_against_the_real_journal(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "chain: intact" in out
     assert json.loads(out.split("\n", 1)[1])["chain_intact"] is True
+
+
+# ---------------------------------------------------------------------------
+# Concurrency -- the dashboard serves sessions on threads
+# ---------------------------------------------------------------------------
+
+def test_concurrent_cold_loads_all_succeed(tmp_path):
+    """Streamlit runs concurrent sessions on separate threads, so several
+    first-visitors land in rebuild() at once. Build-in-place made them
+    stamp on each other mid-DDL: 10 of 12 failed with `disk I/O error`,
+    `attempt to write a readonly database` and `table meta already
+    exists`. On the public demo URL that is a blank page in front of a
+    judge -- and showErrorDetails="none" means it would not even say why.
+
+    Build-then-os.replace makes the race benign: every builder does
+    identical deterministic work from the same journal, so whoever lands
+    last wins and all of them are correct.
+    """
+    import concurrent.futures as cf
+
+    journal = tmp_path / "journal.jsonl"
+    write(journal, *[entry(f"p{i}", "SPY", f"2026-08-31T10:{i:02d}:00-04:00") for i in range(6)])
+    db = str(tmp_path / "race.db")
+
+    def load(_):
+        return store.summary(store.connect(db, str(journal)))["events"]
+
+    with cf.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(load, range(16)))
+
+    assert results == [6] * 16
+    assert not list(tmp_path.glob("*.building.*")), "staging databases must not survive"
+
+
+def test_rebuild_leaves_no_staging_file_behind(tmp_path):
+    journal = tmp_path / "journal.jsonl"
+    write(journal, entry("p1", "SPY", "2026-08-31T10:00:00-04:00"))
+    store.rebuild(str(tmp_path / "x.db"), str(journal))
+    assert not list(tmp_path.glob("*.building.*"))
+
+
+def test_connect_survives_a_database_replaced_underneath_it(tmp_path):
+    """A reader can open the file microseconds before another thread's
+    os.replace swaps a new inode in. Rebuilding from the journal is always
+    the safe answer, and the journal is the source of truth anyway."""
+    journal = tmp_path / "journal.jsonl"
+    write(journal, entry("p1", "SPY", "2026-08-31T10:00:00-04:00"))
+    db = tmp_path / "swap.db"
+    store.rebuild(str(db), str(journal))
+
+    db.write_bytes(b"garbage where a database used to be")
+    conn = store.connect(str(db), str(journal))
+    assert len(store.open_positions(conn)) == 1
