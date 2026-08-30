@@ -504,12 +504,16 @@ def _journal_exit_fill(order, position_id, underlying, reason, qty, submitted_pr
         _check_leg_symmetry(short_symbol, long_symbol, profile, position_id, context="exit_fill_mismatch")
 
 
-def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events):
+def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events, open_orders):
     """Deliberately simpler than canonical's per-exit-type ladder (Sec
     8.2): one shared shape for stop_loss/take_profit/time_exit -- a limit
     at the fresh mid, one concession after the urgent-exit wait, then give
     up for the next tick to retry. Only Thursday's force-close gets the
-    full governance-driven ladder (see _attempt_force_close)."""
+    full governance-driven ladder (see _attempt_force_close).
+
+    Any exit order still open under this position's id prefix is canceled
+    BEFORE the ladder starts -- see the same guard in _attempt_entry for
+    why (a crashed tick's live s1 next to this tick's fresh s0r2)."""
     position_id = entry_rec["position_id"]
     underlying = entry_rec["underlying"]
     qty = entry_rec["_close_qty"]
@@ -537,6 +541,17 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
     # same value baked into this position's own position_id, so it can
     # never change tick to tick the way the recomputed reason/rung can.
     window = entry_rec["window"]
+
+    stale_prefix = f"tg-x-{trade_date}-{window}-{underlying.lower()}-"
+    for o in open_orders:
+        coid = str(o.get("client_order_id") or "")
+        if coid.startswith(stale_prefix) and o.get("id"):
+            canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
+            if canceled.get("status") == "filled":
+                _journal_exit_fill(canceled, position_id, underlying, reason, qty, mid_debit,
+                                    short_c.symbol, long_c.symbol, profile)
+                return {"filled": True, "order_id": o.get("id"), "raced_stale_fill": True}
+            _append_journal("exit_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
 
     cid0 = spread.client_order_id("x", trade_date, window, underlying, stage0)
     body0 = spread.closing_mleg_body(plan, qty, mid_debit)
@@ -715,7 +730,7 @@ def _evaluate_and_exit_position(entry_rec, option_positions, gov, now, profile, 
     if reason.startswith("force_close"):
         result = _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run, open_orders)
     else:
-        result = _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events)
+        result = _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events, open_orders)
     return {"position_id": position_id, "signal": reason, **result}
 
 
@@ -737,10 +752,32 @@ def _journal_entry_fill(order, candidate, qty, window_label, trade_date, underly
     )
 
 
-def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, dry_run):
+def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, dry_run, open_orders):
     underlying = candidate.underlying
     position_id = _position_id(trade_date, window_label, underlying)
     started = time.monotonic()
+
+    # Cancel any entry order still open under this window's id prefix
+    # BEFORE the walk starts. The stale-id walk in _lookup_or_submit only
+    # resolves the id it is on: a tick that submitted s0, canceled it,
+    # submitted s1 and then died mid-poll leaves s1 live (a DAY order), and
+    # the next tick's walk went s0 -> stale -> s0r2 -> 404 -> submit --
+    # two live entry orders on one underlying, both fillable (found in
+    # review 30 Aug 2026 against the live-verified fact that
+    # get-by-client-id keeps answering a canceled id). Mirrors
+    # _attempt_force_close's stale-rung cancel; a cancel that loses the
+    # race to a fill is journaled as this window's fill and ends the attempt.
+    stale_prefix = f"tg-e-{trade_date}-{window_label}-{underlying.lower()}-"
+    for o in open_orders:
+        coid = str(o.get("client_order_id") or "")
+        if coid.startswith(stale_prefix) and o.get("id"):
+            canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
+            if canceled.get("status") == "filled":
+                stage = coid.rsplit("-", 1)[-1]
+                _journal_entry_fill(canceled, candidate, qty, window_label, trade_date, underlying, stage,
+                                     time.monotonic() - started, candidate.credit)
+                return {"filled": True, "stage": stage, "order_id": o.get("id"), "raced_stale_fill": True}
+            _append_journal("entry_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
 
     body0 = spread.mleg_body(candidate, qty)
     cid0 = spread.client_order_id("e", trade_date, window_label, underlying, "s0")
@@ -816,7 +853,7 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
 
 def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_state,
                              open_positions_journal, entries_today, filled_underlyings_today,
-                             consecutive_exceptions, halt_active):
+                             consecutive_exceptions, halt_active, open_orders):
     trade_date = now.astimezone(ET).strftime("%Y%m%d")
 
     try:
@@ -906,7 +943,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         _append_journal("no_trade", reason=last_reason, underlying=underlying)
         return {"attempted": True, "filled": False, "reason": last_reason}
 
-    ladder_result = _attempt_entry(winner, winner_qty, window_label, trade_date, now, gov, profile, dry_run)
+    ladder_result = _attempt_entry(winner, winner_qty, window_label, trade_date, now, gov, profile, dry_run, open_orders)
     return {"attempted": True, "underlying": underlying, **ladder_result}
 
 
@@ -1131,7 +1168,7 @@ def _run_tick_body(now, dry_run, profile):
             entry_result = _attempt_entry_pipeline(
                 window_label, now, gov, profile, dry_run, account_state,
                 open_positions_journal, entries_today, filled_underlyings_today,
-                consecutive_exceptions, halt_active,
+                consecutive_exceptions, halt_active, open_orders,
             )
 
     # Step 11 -- the git publish is _run_tick_guarded's, so it also runs

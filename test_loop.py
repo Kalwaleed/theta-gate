@@ -7,6 +7,7 @@ rehearsal -- that needs a live/mocked broker+LLM boundary far beyond what a
 lazy self-check owes; see the build report.
 """
 
+import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -264,12 +265,103 @@ def test_attempt_entry_stops_after_failed_submit(tmp_path, monkeypatch):
     with patch("loop.alpaca.get_order_by_client_id", return_value=None), \
          patch("loop.alpaca.submit_mleg", return_value=dict(REJECTED_422)) as submit_mock, \
          patch("loop.alpaca.positions", return_value=[]):
-        result = loop._attempt_entry(plan, 1, "1030", "20260831", now, gov, "submission", False)
+        result = loop._attempt_entry(plan, 1, "1030", "20260831", now, gov, "submission", False, [])
     submit_mock.assert_called_once()  # a rejected s0 ends the attempt -- no s1
     assert result == {"filled": False, "failed": True, "stage": "s0"}
     events = [(e["event"], e.get("stage")) for e in loop._read_journal()]
     assert ("entry_intent", "s0") in events and ("entry_intent", "s1") not in events
     assert [ev for ev, _ in events if ev in ("submit_failed", "entry_failed")] == ["submit_failed", "entry_failed"]
+
+
+SHORT_C = spread.Contract(symbol="SPY260908P00700000", strike=700.0, delta=-0.20, iv=0.2, bid=1.50, ask=1.55, expiry="2026-09-08")
+LONG_C = spread.Contract(symbol="SPY260908P00695000", strike=695.0, delta=-0.13, iv=0.2, bid=0.90, ask=0.95, expiry="2026-09-08")
+PLAN = spread.SpreadPlan(underlying="SPY", direction="bull_put", expiry="2026-09-08", short=SHORT_C, long=LONG_C,
+                         width=5, credit=0.60, qty=1, max_loss_dollars=440)
+GOV = {"operational": {"order_poll_max_attempts": 60, "unfilled_order_cancel_after_seconds": 60}}
+NOW = datetime(2026, 8, 31, 10, 31, tzinfo=ET)
+ENTRY_REC = {"position_id": "tg-e-20260831-1030-spy", "underlying": "SPY", "_close_qty": 1, "trade_date": "20260831",
+             "direction": "bull_put", "expiry": "2026-09-08", "width": 5, "credit": 0.60, "window": "1030"}
+
+
+@contextlib.contextmanager
+def _recording_broker(lookups, broker_calls):
+    """Every submit/cancel lands in broker_calls in order; every poll answers canceled."""
+    def submit(legs, limit_price, client_order_id, qty, dry_run, profile):
+        broker_calls.append(("submit", client_order_id))
+        return {"id": f"o-{client_order_id}", "status": "accepted", "filled_qty": "0", "client_order_id": client_order_id}
+
+    def cancel(order_id, profile):
+        broker_calls.append(("cancel", order_id))
+        return {}
+
+    with contextlib.ExitStack() as stack:
+        for p in (
+            patch("loop.alpaca.get_order_by_client_id", side_effect=lambda cid, profile: lookups[cid]),
+            patch("loop.alpaca.submit_mleg", side_effect=submit),
+            patch("loop.alpaca.cancel_order", side_effect=cancel),
+            patch("loop.alpaca.poll_until_filled",
+                  side_effect=lambda order_id, max_attempts, profile: {"id": order_id, "status": "canceled", "filled_qty": "0"}),
+            patch("loop.alpaca.positions", return_value=[]),
+            patch("loop.time.sleep", lambda s: None),
+        ):
+            stack.enter_context(p)
+        yield
+
+
+def test_attempt_entry_cancels_a_live_sibling_before_the_walk(tmp_path, monkeypatch):
+    # Tick 1 submitted s0, canceled it, submitted s1, then died mid-poll: s1
+    # is still a live DAY order. Tick 2's walk (s0 stale -> s0r2 -> 404 ->
+    # submit) would otherwise put a second live entry order beside it.
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    base0, base1 = "tg-e-20260831-1030-spy-s0", "tg-e-20260831-1030-spy-s1"
+    lookups = {base0: STALE_CANCELED, base0 + "r2": None,
+               base1: {"id": "o-s1", "status": "canceled", "filled_qty": "0"}, base1 + "r2": None}
+    open_orders = [{"id": "o-s1", "client_order_id": base1},
+                   {"id": "o-qqq", "client_order_id": "tg-e-20260831-1030-qqq-s1"},   # other underlying -- untouched
+                   {"id": "o-x", "client_order_id": "tg-x-20260831-1030-spy-s0"}]     # an exit order -- untouched
+    broker_calls = []
+    with _recording_broker(lookups, broker_calls):
+        result = loop._attempt_entry(PLAN, 1, "1030", "20260831", NOW, GOV, "submission", False, open_orders)
+    assert result == {"filled": False, "stage": "s1"}
+    assert broker_calls[0] == ("cancel", "o-s1")
+    assert [c for c in broker_calls if c[0] == "submit"] == [("submit", base0 + "r2"), ("submit", base1 + "r2")]
+    assert ("cancel", "o-qqq") not in broker_calls and ("cancel", "o-x") not in broker_calls
+    stale = [e["client_order_id"] for e in loop._read_journal() if e["event"] == "entry_stale_canceled"]
+    assert stale == [base1]
+
+
+def test_attempt_entry_journals_a_stale_sibling_that_filled_under_the_cancel(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    base1 = "tg-e-20260831-1030-spy-s1"
+    filled = {"id": "o-s1", "status": "filled", "filled_qty": "1", "filled_avg_price": "-0.55", "client_order_id": base1}
+    with patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.poll_until_filled", return_value=filled), \
+         patch("loop.alpaca.get_order_by_client_id", side_effect=AssertionError("must not start the walk")), \
+         patch("loop.alpaca.submit_mleg", side_effect=AssertionError("must not submit")):
+        result = loop._attempt_entry(PLAN, 1, "1030", "20260831", NOW, GOV, "submission", False,
+                                     [{"id": "o-s1", "client_order_id": base1}])
+    assert result["filled"] is True and result["order_id"] == "o-s1" and result["stage"] == "s1"
+    events = loop._read_journal()
+    assert [e["event"] for e in events] == ["entry_filled"]
+    assert events[0]["credit"] == 0.55 and events[0]["client_order_id"] == base1
+
+
+def test_attempt_exit_cancels_a_live_sibling_before_the_walk(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    base0, base1 = "tg-x-20260831-1030-spy-s0", "tg-x-20260831-1030-spy-s1"
+    lookups = {base0: STALE_CANCELED, base0 + "r2": None,
+               base1: {"id": "o-x-s1", "status": "canceled", "filled_qty": "0"}, base1 + "r2": None}
+    open_orders = [{"id": "o-x-s1", "client_order_id": base1},
+                   {"id": "o-force", "client_order_id": "tg-x-20260831-force09031430-spy-s0"},  # force rung -- not this ladder's
+                   {"id": "o-e", "client_order_id": "tg-e-20260831-1030-spy-s1"}]              # an entry order -- untouched
+    broker_calls = []
+    with _recording_broker(lookups, broker_calls):
+        result = loop._attempt_exit(ENTRY_REC, "take_profit", SHORT_C, LONG_C, GOV, NOW, "submission", False, [], open_orders)
+    assert result == {"filled": False}
+    assert broker_calls[0] == ("cancel", "o-x-s1")
+    assert [c for c in broker_calls if c[0] == "submit"] == [("submit", base0 + "r2"), ("submit", base1 + "r2")]
+    assert ("cancel", "o-force") not in broker_calls and ("cancel", "o-e") not in broker_calls
 
 
 def test_run_tick_guarded_publishes_once_on_success():
