@@ -1,3 +1,5 @@
+> **Update Sun 30 Aug 2026 (07:30 ET).** Read `docs/ANALYSIS-2026-08-30.md` first. The "no blockers" line below was wrong: as of `92b2f96` no order could ever be submitted (the CLI writes API errors to stderr; `alpaca._run` read stdout only) and the option chain was capped at 100 contracts. Both are fixed on `main` with 136 tests; the sign convention (item 5 below) is verified. The VRP gate vetoes every candidate on Friday's data — PK's call, see the analysis. PR #2 is closed; PRs #7–#12 are open.
+
 # Handoff — Theta Gate
 
 **Written Sat 29 Aug 2026, 11:40 ET** — after the GitHub Actions rehearsal ran green on the real runner with all three secrets verified populated. `main` is pushed and in sync with `origin`; 96/96 tests pass (the team merged PRs #1/#3/#4/#5 — `store.py`, `app.py` and doc corrections — on top). **No blockers remain for Monday's first live session.** Deadline: **submission Fri 4 Sep, 11:00 ET.**
