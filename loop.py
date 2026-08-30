@@ -341,6 +341,16 @@ def _lookup_or_submit(client_order_id, legs, limit_price, qty, profile, dry_run)
     return {}, "failed", client_order_id
 
 
+def _stale_cancel_settled(canceled):
+    """True only when a swept sibling order is provably dead: a terminal
+    status AND nothing filled. Anything else -- still pending_cancel after
+    the confirm poll, a refused cancel (still 'accepted'), an error body,
+    or a partial fill -- means a live or half-filled order is still out
+    there, and the ladder must NOT submit beside it (re-verify 30 Aug
+    2026: the guards used to treat every non-'filled' answer as canceled)."""
+    return canceled.get("status") in TERMINAL_UNFILLED_STATUSES and float(canceled.get("filled_qty") or 0) == 0
+
+
 def _wait_for_terminal(order, wait_seconds, profile, gov):
     order_id = order.get("id")
     if not order_id:
@@ -527,8 +537,10 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
         short=short_c, long=long_c, width=entry_rec["width"], credit=entry_rec["credit"],
         qty=qty, max_loss_dollars=0,
     )
-    mid_debit = round(short_c.mid - long_c.mid, 2)
-    natural_debit = round(short_c.ask - long_c.bid, 2)
+    # floor at one cent: a worthless spread (zero-bid legs) still needs a
+    # positive debit -- '0.00' or '-0.01' would ask the broker for a credit to close
+    mid_debit = max(round(short_c.mid - long_c.mid, 2), 0.01)
+    natural_debit = max(round(short_c.ask - long_c.bid, 2), 0.01)
 
     rung = {"stop_loss": "stop", "take_profit": "tp", "time_exit": "time"}[reason]
     attempt_n = _exit_attempt_number(journal_events, position_id)
@@ -554,6 +566,12 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
                 _journal_exit_fill(canceled, position_id, underlying, reason, qty, mid_debit,
                                     short_c.symbol, long_c.symbol, profile)
                 return {"filled": True, "order_id": o.get("id"), "raced_stale_fill": True}
+            if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                    short_c.symbol, long_c.symbol, profile, position_id, context="exit_stale_cancel"):
+                _append_journal("exit_stale_unresolved", level="critical", position_id=position_id,
+                                 client_order_id=coid, status=canceled.get("status"),
+                                 filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                return {"filled": False, "failed": True, "stale_unresolved": coid}
             _append_journal("exit_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
 
     cid0 = spread.client_order_id("x", trade_date, window, underlying, stage0)
@@ -641,7 +659,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
         short=short_c, long=long_c, width=entry_rec["width"], credit=entry_rec["credit"],
         qty=qty, max_loss_dollars=0,
     )
-    mid_debit = round(short_c.mid - long_c.mid, 2)
+    mid_debit = max(round(short_c.mid - long_c.mid, 2), 0.01)  # one-cent floor, see _attempt_exit
     natural_debit = max(mid_debit, round(short_c.ask - long_c.bid, 2))
     price = {
         "limit_at_mid": mid_debit,
@@ -668,6 +686,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
                     _journal_exit_fill(canceled, position_id, underlying, "force_close", qty, mid_debit,
                                         short_c.symbol, long_c.symbol, profile)
                     return {"filled": True, "rung": rung_tag, "order_id": o.get("id"), "raced_stale_fill": True}
+                if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                        short_c.symbol, long_c.symbol, profile, position_id, context="force_stale_cancel"):
+                    _append_journal("force_close_stale_unresolved", level="critical", position_id=position_id,
+                                     client_order_id=coid, status=canceled.get("status"),
+                                     filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                    return {"filled": False, "failed": True, "rung": rung_tag, "stale_unresolved": coid}
                 _append_journal("force_close_stale_canceled", position_id=position_id, client_order_id=coid,
                                  dry_run=dry_run)
 
@@ -788,6 +812,12 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
                 _journal_entry_fill(canceled, candidate, qty, window_label, trade_date, underlying, stage,
                                      time.monotonic() - started, candidate.credit)
                 return {"filled": True, "stage": stage, "order_id": o.get("id"), "raced_stale_fill": True}
+            if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                    candidate.short.symbol, candidate.long.symbol, profile, position_id, context="entry_stale_cancel"):
+                _append_journal("entry_stale_unresolved", level="critical", position_id=position_id,
+                                 client_order_id=coid, status=canceled.get("status"),
+                                 filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                return {"filled": False, "failed": True, "stage": "sweep", "stale_unresolved": coid}
             _append_journal("entry_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
 
     body0 = spread.mleg_body(candidate, qty)
@@ -1076,11 +1106,12 @@ def _run_tick_guarded(now, dry_run, profile):
     # "error" covers a git subprocess that raised AFTER the commit (a push
     # timeout): _git_publish reports committed=False then, and the tick
     # would otherwise go green with its commit stranded on the runner.
-    publish_failed = bool(git_result.get("error")) or (bool(git_result.get("committed")) and not git_result.get("pushed"))
+    publish_failed = ("error" in git_result) or (bool(git_result.get("committed")) and not git_result.get("pushed"))
     if publish_failed:
+        note = ("journal committed locally but push failed" if git_result.get("committed")
+                else f"git raised before the push completed: {git_result.get('error')!r}")
         _append_journal("journal_publish_failed", level="critical", git_result=git_result,
-                         note="journal committed locally but push failed -- this runner's state may "
-                              "never reach the next tick's fresh checkout")
+                         note=note + " -- this runner's state may never reach the next tick's fresh checkout")
         summary["ok"] = False
     summary["git"] = git_result
     return summary
@@ -1213,7 +1244,15 @@ def main():
                               "reads, real HALT triggers, and a real call to Anthropic via brain.propose")
     parser.add_argument("--profile", default="submission",
                          help="Alpaca CLI profile to trade against (default: submission)")
+    parser.add_argument("--local-live", action="store_true",
+                         help="allow a NON-dry-run tick outside GitHub Actions. Off by default: a local live "
+                              "tick overlapping the runner's tick cancels the runner's working order mid-ladder "
+                              "(the sibling sweep) and can leave two live orders on one underlying")
     args = parser.parse_args()
+
+    if not args.dry_run and os.environ.get("GITHUB_ACTIONS") != "true" and not args.local_live:
+        raise SystemExit("refusing a live tick outside GitHub Actions -- pass --dry-run, or --local-live "
+                         "only while the cron is halted (data/HALT.json active) or the market is closed")
 
     now = datetime.now(ET)
     summary = run_tick(now=now, dry_run=args.dry_run, profile=args.profile)

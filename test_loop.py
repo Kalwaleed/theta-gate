@@ -564,3 +564,65 @@ def test_run_tick_guarded_marks_git_exception_as_publish_failure(tmp_path, monke
         summary = loop._run_tick_guarded(now, False, "submission")
     assert summary["ok"] is False
     assert any(e["event"] == "journal_publish_failed" for e in loop._read_journal())
+
+
+# --- 30 Aug 2026 re-verify: a swept sibling must be PROVABLY dead before the ladder submits ---
+
+def _sweep_case(tmp_path, monkeypatch, sibling_after_cancel):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    base1 = "tg-e-20260831-1030-spy-s1"
+    with patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.poll_until_filled", return_value={"id": "o-s1", "client_order_id": base1, **sibling_after_cancel}), \
+         patch("loop.alpaca.get_order", return_value={"id": "o-s1", "client_order_id": base1, **sibling_after_cancel}), \
+         patch("loop.alpaca.positions", return_value=[]), \
+         patch("loop.alpaca.get_order_by_client_id", side_effect=AssertionError("must not start the walk")), \
+         patch("loop.alpaca.submit_mleg", side_effect=AssertionError("must not submit beside a live/partial sibling")):
+        result = loop._attempt_entry(PLAN, 1, "1030", "20260831", NOW, GOV, "submission", False,
+                                     [{"id": "o-s1", "client_order_id": base1}])
+    return result, [e["event"] for e in loop._read_journal()]
+
+
+def test_entry_sweep_gives_up_on_a_partially_filled_sibling(tmp_path, monkeypatch):
+    result, events = _sweep_case(tmp_path, monkeypatch, {"status": "canceled", "filled_qty": "1"})
+    assert result["failed"] is True and result["stale_unresolved"] == "tg-e-20260831-1030-spy-s1"
+    assert events == ["entry_stale_unresolved"]
+
+
+def test_entry_sweep_gives_up_when_the_cancel_is_still_pending(tmp_path, monkeypatch):
+    for status in ("pending_cancel", "accepted"):
+        result, events = _sweep_case(tmp_path, monkeypatch, {"status": status, "filled_qty": "0"})
+        assert result["failed"] is True and events[-1] == "entry_stale_unresolved"
+
+
+def test_exit_sweep_gives_up_when_the_cancel_is_still_pending(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    base1 = "tg-x-20260831-1030-spy-s1"
+    with patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.poll_until_filled", return_value={"id": "o-x-s1", "status": "pending_cancel", "filled_qty": "0"}), \
+         patch("loop.alpaca.positions", return_value=[]), \
+         patch("loop.alpaca.get_order_by_client_id", side_effect=AssertionError("must not start the walk")), \
+         patch("loop.alpaca.submit_mleg", side_effect=AssertionError("must not submit")):
+        result = loop._attempt_exit(ENTRY_REC, "take_profit", SHORT_C, LONG_C, GOV, NOW, "submission", False, [],
+                                    [{"id": "o-x-s1", "client_order_id": base1}])
+    assert result["failed"] is True
+    assert [e["event"] for e in loop._read_journal()] == ["exit_stale_unresolved"]
+
+
+def test_exit_ladder_floors_a_worthless_spread_at_one_cent(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    dead_short = spread.Contract(symbol=SHORT_C.symbol, strike=700.0, delta=-0.01, iv=0.2, bid=0.0, ask=0.01, expiry="2026-09-08")
+    dead_long = spread.Contract(symbol=LONG_C.symbol, strike=695.0, delta=-0.01, iv=0.2, bid=0.0, ask=0.01, expiry="2026-09-08")
+    calls = []
+    with _recording_broker({"tg-x-20260831-1030-spy-s0": None, "tg-x-20260831-1030-spy-s1": None}, calls):
+        loop._attempt_exit(ENTRY_REC, "take_profit", dead_short, dead_long, GOV, NOW, "submission", False, [], [])
+    intents = [e for e in loop._read_journal() if e["event"] == "exit_intent"]
+    assert intents and all(e["limit_price"] >= 0.01 for e in intents)
+
+
+def test_main_refuses_a_live_tick_outside_github_actions():
+    import os, subprocess, sys
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
+    proc = subprocess.run([sys.executable, "loop.py", "--once"], capture_output=True, text=True, env=env)
+    assert proc.returncode != 0 and "refusing a live tick" in proc.stderr
