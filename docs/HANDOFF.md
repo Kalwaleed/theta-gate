@@ -92,7 +92,7 @@ It mirrors `loop.py`'s entry pipeline exactly (same functions, same order) but i
 
 ## Operating notes
 
-Run a tick locally (reads and journal writes are real; broker writes held back):
+Run a tick locally (reads and journal writes are real; broker writes held back). A NON-dry-run tick outside GitHub Actions is refused unless you pass `--local-live` -- it would cancel the runner's working order mid-ladder:
 
 ```bash
 set -a; source .env; set +a
