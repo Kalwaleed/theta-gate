@@ -53,6 +53,12 @@ jobs:
           echo "Current visibility: $CURRENT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Sanity read -- recent commits and open PRs
+        # Informational only -- must never block the actual flip below.
+        # `gh pr list` needs a "Pull requests" permission the PAT may not
+        # have (Administration alone doesn't cover it; confirmed live 30 Aug
+        # -- it 500s with "Resource not accessible by personal access token"
+        # otherwise), so this step is allowed to fail without failing the job.
+        continue-on-error: true
         run: |
           {
             echo "### Repo state at flip time"
