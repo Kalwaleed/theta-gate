@@ -1,0 +1,148 @@
+<!doctype html>
+<!--
+  Theta Gate submission cover. 16:9, rendered to cover.png at 1920x1080.
+
+  Built as HTML rather than in the deck's LaTeX because this is one fixed
+  raster deliverable, not a document -- and because the palette and type
+  then come from exactly the same source as app.py and docs/diagrams/*.html.
+
+  Designed for the size it is ACTUALLY seen at: a thumbnail in a grid of
+  other submissions on lablab.ai, perhaps 300px wide. That is the whole
+  reason the wordmark is oversized, the graphic is a single idea, and there
+  are exactly three supporting facts. Anything more turns to grey mush at
+  thumbnail scale, which is the only scale that decides whether a judge
+  clicks.
+
+  The graphic IS the product: candidates arrive from the left, a solid
+  indigo rule stops almost all of them, one passes. No legend needed.
+
+  Render:  ./build.sh      (needs Google Chrome)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theta Gate — cover</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:#0B0D0F; --paper:#F5F5F5; --accent:#3F2AC1;
+    --muted:#5B5B5B; --soft:#838BA0; --rule:rgba(11,13,15,0.12);
+    --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:1920px; height:1080px; background:var(--paper); }
+  body {
+    font-family:var(--sans); color:var(--ink);
+    display:grid; grid-template-rows:auto 1fr auto;
+    padding:92px 104px 78px;
+  }
+
+  /* ---- top rail ---- */
+  .rail { display:flex; justify-content:space-between; align-items:baseline;
+          font-family:var(--mono); font-size:19px; letter-spacing:.28em;
+          text-transform:uppercase; color:var(--soft); }
+  .rail .r { letter-spacing:.2em; }
+
+  /* ---- middle ---- */
+  .mid { display:grid; grid-template-columns:1.08fr 0.92fr; gap:76px;
+         align-items:center; padding-top:20px; }
+
+  .word { font-family:var(--mono); font-weight:500; font-size:96px;
+          letter-spacing:.2em; line-height:1; color:var(--ink); }
+  .claim { margin-top:40px; font-size:60px; font-weight:200; line-height:1.14;
+           letter-spacing:-.022em; max-width:16ch; }
+  .claim b { font-weight:600; }
+  .sub { margin-top:34px; font-size:26px; line-height:1.5; color:var(--muted);
+         max-width:34ch; font-weight:300; }
+
+  /* ---- the gate ---- */
+  svg { width:100%; height:auto; display:block; }
+  .cand { stroke:var(--soft); stroke-width:2.5; stroke-dasharray:9 8; fill:none; }
+  .pass { stroke:var(--accent); stroke-width:4; fill:none; }
+  .gate { stroke:var(--accent); stroke-width:7; stroke-linecap:round; }
+  .halo { stroke:var(--accent); stroke-width:22; opacity:.10; stroke-linecap:round; }
+  .stop { fill:none; stroke:var(--soft); stroke-width:2.5; }
+  .lbl  { font-family:var(--mono); font-size:16px; letter-spacing:.13em;
+          text-transform:uppercase; fill:var(--soft); }
+  .lbl.on { fill:var(--accent); }
+
+  /* ---- bottom ---- */
+  .foot { border-top:1px solid var(--rule); padding-top:30px;
+          display:flex; gap:80px; align-items:flex-start; }
+  .fact .k { font-family:var(--mono); font-size:15px; letter-spacing:.18em;
+             text-transform:uppercase; color:var(--soft); margin-bottom:9px; }
+  .fact .v { font-size:27px; font-weight:300; letter-spacing:-.01em; }
+  .fact .v em { font-style:normal; color:var(--accent); font-weight:400; }
+  .spacer { flex:1; }
+  .paper-tag { font-family:var(--mono); font-size:16px; letter-spacing:.16em;
+               text-transform:uppercase; color:var(--soft); align-self:flex-end;
+               text-align:right; line-height:1.7; }
+</style>
+</head>
+<body>
+
+  <div class="rail">
+    <div>Alpaca AI Trading Agents Hackathon</div>
+    <div class="r">28 Aug &ndash; 4 Sep 2026</div>
+  </div>
+
+  <div class="mid">
+    <div>
+      <div class="word">THETA&nbsp;GATE</div>
+      <div class="claim">An autonomous options agent that <b>cannot place a trade it should not.</b></div>
+      <div class="sub">The model proposes a direction. Deterministic Python does
+        everything else &mdash; and a pure-function risk guard has the last word.</div>
+    </div>
+
+    <!-- Candidates arrive from the left. The guard stops almost all of them.
+         One passes. That is the entire product, and it needs no legend. -->
+    <svg viewBox="0 0 760 470" role="img"
+         aria-label="Trade candidates approaching a risk guard; nearly all are rejected, one passes through">
+      <text class="lbl" x="0" y="26">CANDIDATES</text>
+      <text class="lbl on" x="352" y="26">GUARD</text>
+      <text class="lbl on" x="628" y="26">ORDER</text>
+
+      <!-- rejected: stop short of the gate, with a small terminal tick -->
+      <path class="cand" d="M0 92  H352"/>
+      <path class="stop" d="M352 80 v24"/>
+      <path class="cand" d="M0 162 H352"/>
+      <path class="stop" d="M352 150 v24"/>
+      <path class="cand" d="M0 232 H352"/>
+      <path class="stop" d="M352 220 v24"/>
+      <path class="cand" d="M0 372 H352"/>
+      <path class="stop" d="M352 360 v24"/>
+      <path class="cand" d="M0 442 H352"/>
+      <path class="stop" d="M352 430 v24"/>
+
+      <!-- the one that clears every gate -->
+      <path class="pass" d="M0 302 H760"/>
+      <circle cx="742" cy="302" r="9" fill="#3F2AC1"/>
+
+      <!-- the guard itself -->
+      <line class="halo" x1="360" y1="66" x2="360" y2="458"/>
+      <line class="gate" x1="360" y1="66" x2="360" y2="458"/>
+    </svg>
+  </div>
+
+  <div class="foot">
+    <div class="fact">
+      <div class="k">Risk guard</div>
+      <div class="v"><em>18</em> deterministic gates</div>
+    </div>
+    <div class="fact">
+      <div class="k">LLM authority</div>
+      <div class="v"><em>zero</em> tools, zero writes</div>
+    </div>
+    <div class="fact">
+      <div class="k">Max loss</div>
+      <div class="v">fixed at <em>entry</em>, by construction</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="paper-tag">Alpaca paper trading<br>Built with Claude</div>
+  </div>
+
+</body>
+</html>
