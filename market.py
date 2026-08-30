@@ -107,17 +107,22 @@ def fetch_vix_family(now: datetime, url_template: str, max_age_days: int = 4) ->
 # Realised vol / intraday move (Alpaca daily bars)
 # ---------------------------------------------------------------------------
 
-def compute_rv20(daily_bars: list[dict], now: datetime) -> tuple:
-    """20-day realised vol, annualised. Excludes any bar whose ET date is
-    NOT strictly before now's ET date -- the current, possibly-incomplete
-    session must never leak into a return meant to already be closed.
-    Requires >= 21 complete sessions; returns (None, None) on insufficient
-    history or a non-finite/non-positive close rather than raising -- a bad
-    bar is a data problem, and gate_vrp_present already rejects a missing
-    realised_vol_20d.
+def compute_rv20(daily_bars: list[dict], now: datetime, lookback_days: int = 20) -> tuple:
+    """Trailing realised vol, annualised, over the last `lookback_days`
+    complete sessions -- the window is governance vrp.realised_vol_lookback_days
+    (20 as of 30 Aug 2026; the audit found the key rendered on the dashboard
+    but read by nothing, so the 21-session window was hardcoded here).
+    Excludes any bar whose ET date is NOT strictly before now's ET date --
+    the current, possibly-incomplete session must never leak into a return
+    meant to already be closed. Requires >= lookback_days + 1 complete
+    sessions (N returns need N + 1 closes); returns (None, None) on
+    insufficient history or a non-finite/non-positive close rather than
+    raising -- a bad bar is a data problem, and gate_vrp_present already
+    rejects a missing realised_vol_20d.
 
     Returns (rv20, prior_close), where prior_close is the most recent
-    complete session's close (for the caller's intraday-move calculation).
+    complete session's close (for the caller's intraday-move calculation)
+    and does not depend on lookback_days.
     """
     now_date = now.astimezone(ET).date()
     complete = []
@@ -130,11 +135,11 @@ def compute_rv20(daily_bars: list[dict], now: datetime) -> tuple:
             complete.append((bar_date, bar["c"]))
     complete.sort(key=lambda pair: pair[0])
 
-    if len(complete) < 21:
+    if len(complete) < lookback_days + 1:
         return None, None
 
     try:
-        closes = [float(c) for _, c in complete[-21:]]
+        closes = [float(c) for _, c in complete[-(lookback_days + 1):]]
     except (TypeError, ValueError):
         return None, None
     if any(not math.isfinite(c) or c <= 0 for c in closes):
@@ -240,12 +245,14 @@ def build_regime_state(now: datetime, event_calendar_path: str, vix_url_template
 
 
 def build_underlying_state(
-    underlying: str, now: datetime, dte_min: int, dte_max: int, profile: str = "submission"
+    underlying: str, now: datetime, dte_min: int, dte_max: int, profile: str = "submission",
+    rv_lookback_days: int = 20,
 ) -> dict:
     """Orchestrates one underlying's full state read: spot (latest quote
-    midpoint), RV20 + prior close (45 calendar days of daily bars), intraday
-    move, and every put contract across the whole DTE window in a single
-    chain call. Does NOT compute ATM IV -- the caller calls compute_atm_iv
+    midpoint), trailing RV over rv_lookback_days (governance
+    vrp.realised_vol_lookback_days) + prior close (45 calendar days of daily
+    bars), intraday move, and every put contract across the whole DTE window
+    in a single chain call. Does NOT compute ATM IV -- the caller calls compute_atm_iv
     once it knows which expiry-group of `contracts` its chosen candidate
     belongs to."""
     quote = (alpaca.latest_quote(underlying, profile=profile).get("quote")) or {}
@@ -255,18 +262,26 @@ def build_underlying_state(
     spot = (bid + ask) / 2
     spot_ts = spread.parse_quote_ts(quote.get("t"))
 
+    # ponytail: 45 calendar days is ~31 complete sessions -- enough for any
+    # lookback <= 30. Widen the fetch before raising the governance number past that.
     start = (now.astimezone(ET) - timedelta(days=45)).date().isoformat()
     daily_bars = alpaca.stock_bars(underlying, start=start, limit=45, profile=profile).get("bars", [])
-    rv20, prior_close = compute_rv20(daily_bars, now)
+    rv20, prior_close = compute_rv20(daily_bars, now, lookback_days=rv_lookback_days)
     if rv20 is None:
-        raise MarketDataError(f"{underlying}: fewer than 21 complete daily sessions for RV20")
+        raise MarketDataError(
+            f"{underlying}: fewer than {rv_lookback_days + 1} complete daily sessions for RV{rv_lookback_days}"
+        )
 
     now_date = now.astimezone(ET).date()
     low = (now_date + timedelta(days=dte_min)).isoformat()
     high = (now_date + timedelta(days=dte_max)).isoformat()
+    # Puts only: band strikes sit 1-4 % below spot and the long leg $5
+    # further; compute_atm_iv needs one strike >= spot; 10 % below covers a
+    # 2 % shock plus width. Windowed so the whole DTE range stays one page.
     chain = alpaca.option_chain(
         underlying, option_type="put",
         expiration_date_gte=low, expiration_date_lte=high,
+        strike_gte=round(spot * 0.90, 2), strike_lte=round(spot * 1.02, 2),
         profile=profile,
     )
     contracts = spread.parse_chain(chain.get("snapshots", {}))

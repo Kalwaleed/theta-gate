@@ -22,8 +22,9 @@ Priority order every tick, each step protecting the one before it:
      broker's own closed orders
   10. the entry attempt: brain.propose -> risk gates -> the two-stage price
       ladder
-  11. journal tick_completed, then git add/commit/push the journal
-      (publication only, never load-bearing for trading logic)
+  11. journal tick_completed; then _run_tick_guarded git add/commit/pushes
+      the journal and HALT.json on EVERY path -- success, exception, or
+      not_paper_abort -- so the tick's own events survive the runner
 
 Durability without a database: Alpaca is authoritative for what is actually
 open (positions/orders, refetched every tick). A deterministic
@@ -70,6 +71,10 @@ ENTRY_CONCESSION_FLOOR_DOLLARS = 0.50   # canonical Sec 7.3's credit floor -- ne
 EXIT_CONCESSION_DOLLARS = 0.05          # mirrors the entry ladder's concession size; not governance-specified
 ENTRY_WINDOW_MINUTES = 15               # canonical Sec 4.3; governance.json's windows_et lists only start times
 LOCK_STALE_SECONDS = 600                # a same-machine lock older than this is presumed abandoned
+TERMINAL_UNFILLED_STATUSES = ("canceled", "expired", "rejected", "done_for_day", "replaced")
+# ponytail: 6 ids per (window, stage) -- one base + r2..r6 -- covers the ~6 ticks a
+# window sees; a 7th stale id gives up loudly rather than walk forever.
+MAX_ORDER_ID_ATTEMPTS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -282,20 +287,68 @@ def _map_account_state(account):
 # ---------------------------------------------------------------------------
 
 def _lookup_or_submit(client_order_id, legs, limit_price, qty, profile, dry_run):
-    """ALWAYS look up by client_order_id before ever submitting. A hit is
-    adopted, never resubmitted. Verified live 29 Aug 2026: Alpaca rejects a
-    resubmitted duplicate id with HTTP 422, never a second order."""
-    existing = alpaca.get_order_by_client_id(client_order_id, profile=profile)
-    if existing is not None:
-        return existing, "adopted"
-    response = alpaca.submit_mleg(
-        legs, limit_price=limit_price, client_order_id=client_order_id,
-        qty=qty, dry_run=dry_run, profile=profile,
-    )
-    # dry_run's echo has no "id"/"status" -- that absence is the only signal
-    # distinguishing an echo from a real submitted order (verified 29 Aug 2026).
-    action = "submitted" if response.get("id") else "dry_run"
-    return response, action
+    """ALWAYS look up by client_order_id before ever submitting. A LIVE hit
+    is adopted, never resubmitted. Verified live 29 Aug 2026: Alpaca
+    rejects a resubmitted duplicate id with HTTP 422, never a second order.
+
+    Verified live 30 Aug 2026 (CLI 0.0.13): get-by-client-id keeps
+    returning an order forever after it is canceled (status "canceled",
+    filled_qty "0"). Adopting that hit gave a window exactly one attempt --
+    after tick 10:30's s0/s1 were canceled, every later tick in the window
+    re-adopted the dead orders and gave up. So a terminal, UNFILLED hit is
+    journaled (stale_order_skipped) and the id walks on: <base>, <base>r2,
+    ... <base>r6. A partially filled terminal order IS adopted -- something
+    real happened under that id and the caller must see it. The walk is
+    deterministic, so a crash-retry re-walks the same sequence and lands on
+    the same live order (still idempotent).
+
+    The entry_intent/exit_intent event journaled BEFORE this call names the
+    BASE id, deliberately: the sequence is a pure function of the base id,
+    so base id + the *_submitted/*_adopted event's resolved id is the
+    durable record. A second intent event per rN would only double the
+    journal for no extra recoverability.
+
+    Returns (order, action, resolved_client_order_id), action in
+    adopted | submitted | dry_run | failed. The CLI puts a rejection body
+    on stderr with no "id" (verified 30 Aug 2026) -- it used to be
+    classified as a dry_run echo and never surfaced. Now it is journaled
+    as submit_failed (critical) and returned as "failed": the caller ends
+    this attempt and the next tick retries the same id sequence."""
+    for n in range(1, MAX_ORDER_ID_ATTEMPTS + 1):
+        cid = client_order_id if n == 1 else f"{client_order_id}r{n}"
+        existing = alpaca.get_order_by_client_id(cid, profile=profile)
+        if existing is not None:
+            if existing.get("status") in TERMINAL_UNFILLED_STATUSES and float(existing.get("filled_qty") or 0) == 0:
+                _append_journal("stale_order_skipped", client_order_id=cid, order_id=existing.get("id"),
+                                 status=existing.get("status"))
+                continue
+            return existing, "adopted", cid
+        response = alpaca.submit_mleg(
+            legs, limit_price=limit_price, client_order_id=cid,
+            qty=qty, dry_run=dry_run, profile=profile,
+        )
+        # dry_run's echo has no "id"/"status" (verified 29 Aug 2026); a
+        # rejection has no "id" either, but it does carry "error".
+        if dry_run and "error" not in response:
+            return response, "dry_run", cid
+        if response.get("id"):
+            return response, "submitted", cid
+        _append_journal("submit_failed", level="critical", client_order_id=cid,
+                         response=json.dumps(response, default=str)[:500])
+        return response, "failed", cid
+    _append_journal("submit_failed", level="critical", client_order_id=client_order_id,
+                     response="every id attempt resolves to a stale order")
+    return {}, "failed", client_order_id
+
+
+def _stale_cancel_settled(canceled):
+    """True only when a swept sibling order is provably dead: a terminal
+    status AND nothing filled. Anything else -- still pending_cancel after
+    the confirm poll, a refused cancel (still 'accepted'), an error body,
+    or a partial fill -- means a live or half-filled order is still out
+    there, and the ladder must NOT submit beside it (re-verify 30 Aug
+    2026: the guards used to treat every non-'filled' answer as canceled)."""
+    return canceled.get("status") in TERMINAL_UNFILLED_STATUSES and float(canceled.get("filled_qty") or 0) == 0
 
 
 def _wait_for_terminal(order, wait_seconds, profile, gov):
@@ -372,9 +425,21 @@ def _extract_actual_price(order, fallback):
 def _fresh_close_quotes(underlying, expiry, short_symbol, long_symbol, profile):
     """HARD_SAFETY (risk.resolve_direction): V1 is put-only, so every open
     Theta Gate position is a bull_put vertical -- option_type is always
-    'put' here."""
-    chain = alpaca.option_chain(underlying, option_type="put", expiration_date=expiry, profile=profile)
-    contracts = {c.symbol: c for c in spread.parse_chain(chain.get("snapshots", {}))}
+    'put' here.
+
+    Windowed to the two leg strikes (+/- 0.50): verified live 30 Aug 2026
+    that the old unwindowed --limit 100 page could omit a leg, which made
+    this raise and the exit (Thursday's flatten included) silently skip as
+    exit_quote_unavailable. A leg with bid 0.00 is kept (allow_zero_bid):
+    a far-OTM long leg late in its life is still closable -- it is sold at
+    whatever the market pays -- and an unquotable open position is worse
+    than a pessimistic mid."""
+    strikes = [spread._strike_from_occ(short_symbol), spread._strike_from_occ(long_symbol)]
+    chain = alpaca.option_chain(
+        underlying, option_type="put", expiration_date=expiry,
+        strike_gte=min(strikes) - 0.5, strike_lte=max(strikes) + 0.5, profile=profile,
+    )
+    contracts = {c.symbol: c for c in spread.parse_chain(chain.get("snapshots", {}), allow_zero_bid=True)}
     short_c, long_c = contracts.get(short_symbol), contracts.get(long_symbol)
     if short_c is None or long_c is None:
         raise market.MarketDataError(f"{underlying}: could not fetch fresh quotes for {short_symbol}/{long_symbol}")
@@ -423,6 +488,14 @@ def _current_force_rung(now, gov):
     return current
 
 
+def _force_rung_tag(now, at_et):
+    """Date-stamped, e.g. force09031430. The client_order_id's date slot is
+    the position's trade_date, not today's, so without the date here a
+    position still open on Friday computed exactly Thursday's force ids
+    and adopted Thursday's stale canceled orders."""
+    return f"force{now.astimezone(ET):%m%d}{at_et.replace(':', '')}"
+
+
 # ---------------------------------------------------------------------------
 # Exit handling (step 6)
 # ---------------------------------------------------------------------------
@@ -444,12 +517,16 @@ def _journal_exit_fill(order, position_id, underlying, reason, qty, submitted_pr
         _check_leg_symmetry(short_symbol, long_symbol, profile, position_id, context="exit_fill_mismatch")
 
 
-def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events):
+def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events, open_orders):
     """Deliberately simpler than canonical's per-exit-type ladder (Sec
     8.2): one shared shape for stop_loss/take_profit/time_exit -- a limit
     at the fresh mid, one concession after the urgent-exit wait, then give
     up for the next tick to retry. Only Thursday's force-close gets the
-    full governance-driven ladder (see _attempt_force_close)."""
+    full governance-driven ladder (see _attempt_force_close).
+
+    Any exit order still open under this position's id prefix is canceled
+    BEFORE the ladder starts -- see the same guard in _attempt_entry for
+    why (a crashed tick's live s1 next to this tick's fresh s0r2)."""
     position_id = entry_rec["position_id"]
     underlying = entry_rec["underlying"]
     qty = entry_rec["_close_qty"]
@@ -460,8 +537,10 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
         short=short_c, long=long_c, width=entry_rec["width"], credit=entry_rec["credit"],
         qty=qty, max_loss_dollars=0,
     )
-    mid_debit = round(short_c.mid - long_c.mid, 2)
-    natural_debit = round(short_c.ask - long_c.bid, 2)
+    # floor at one cent: a worthless spread (zero-bid legs) still needs a
+    # positive debit -- '0.00' or '-0.01' would ask the broker for a credit to close
+    mid_debit = max(round(short_c.mid - long_c.mid, 2), 0.01)
+    natural_debit = max(round(short_c.ask - long_c.bid, 2), 0.01)
 
     rung = {"stop_loss": "stop", "take_profit": "tp", "time_exit": "time"}[reason]
     attempt_n = _exit_attempt_number(journal_events, position_id)
@@ -478,14 +557,33 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
     # never change tick to tick the way the recomputed reason/rung can.
     window = entry_rec["window"]
 
+    stale_prefix = f"tg-x-{trade_date}-{window}-{underlying.lower()}-"
+    for o in open_orders:
+        coid = str(o.get("client_order_id") or "")
+        if coid.startswith(stale_prefix) and o.get("id"):
+            canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
+            if canceled.get("status") == "filled":
+                _journal_exit_fill(canceled, position_id, underlying, reason, qty, mid_debit,
+                                    short_c.symbol, long_c.symbol, profile)
+                return {"filled": True, "order_id": o.get("id"), "raced_stale_fill": True}
+            if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                    short_c.symbol, long_c.symbol, profile, position_id, context="exit_stale_cancel"):
+                _append_journal("exit_stale_unresolved", level="critical", position_id=position_id,
+                                 client_order_id=coid, status=canceled.get("status"),
+                                 filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                return {"filled": False, "failed": True, "stale_unresolved": coid}
+            _append_journal("exit_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
+
     cid0 = spread.client_order_id("x", trade_date, window, underlying, stage0)
     body0 = spread.closing_mleg_body(plan, qty, mid_debit)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid0, reason=reason,
                      rung=rung, stage=stage0, limit_price=mid_debit, qty=qty)
-    order, action = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
+    order, action, cid0 = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{action}", position_id=position_id, client_order_id=cid0, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True}
+    if action == "failed":
+        return {"filled": False, "failed": True}
 
     order = _wait_for_terminal(order, wait_seconds, profile, gov)
     if order.get("status") == "filled":
@@ -508,10 +606,12 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
     body1 = spread.closing_mleg_body(plan, qty, stage1_price)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid1, reason=reason,
                      rung=rung, stage=stage1, limit_price=stage1_price, qty=qty)
-    order, action = _lookup_or_submit(cid1, body1["legs"], body1["limit_price"], qty, profile, dry_run)
+    order, action, cid1 = _lookup_or_submit(cid1, body1["legs"], body1["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{action}", position_id=position_id, client_order_id=cid1, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True}
+    if action == "failed":
+        return {"filled": False, "failed": True}
 
     order = _wait_for_terminal(order, wait_seconds, profile, gov)
     if order.get("status") == "filled":
@@ -534,8 +634,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
     """The full governance-driven ladder (governance.json fully specifies
     it). No in-tick wait: the ladder is time-spaced across ticks (30 min
     per rung, per governance.exit.force_close_ladder), so each tick just
-    submits/adopts whatever the CURRENT rung is; a stale earlier-rung order
-    still open gets canceled first."""
+    submits/adopts whatever the CURRENT rung is; any other exit order for
+    this position still open gets canceled first -- an earlier rung's, or
+    a window-ladder (stop/tp) order left live by a crash in the tick before
+    the first rung (the same two-live-closing-orders shape _attempt_exit
+    guards against; found in review 30 Aug 2026 when its prefix was
+    `tg-x-<date>-force` and skipped the window ladder's ids)."""
     position_id = entry_rec["position_id"]
     underlying = entry_rec["underlying"]
     qty = entry_rec["_close_qty"]
@@ -543,7 +647,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
 
     current_rung = _current_force_rung(now, gov)
     action = current_rung["action"]
-    rung_tag = "force" + current_rung["at_et"].replace(":", "")
+    rung_tag = _force_rung_tag(now, current_rung["at_et"])
 
     if action == "reconcile_and_alert":
         _append_journal("force_close_unresolved", level="critical", position_id=position_id,
@@ -555,7 +659,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
         short=short_c, long=long_c, width=entry_rec["width"], credit=entry_rec["credit"],
         qty=qty, max_loss_dollars=0,
     )
-    mid_debit = round(short_c.mid - long_c.mid, 2)
+    mid_debit = max(round(short_c.mid - long_c.mid, 2), 0.01)  # one-cent floor, see _attempt_exit
     natural_debit = max(mid_debit, round(short_c.ask - long_c.bid, 2))
     price = {
         "limit_at_mid": mid_debit,
@@ -568,7 +672,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
         "market_mleg": min(round(natural_debit + 0.05, 2), entry_rec["width"] - 0.01),
     }[action]
 
-    stale_prefix = f"tg-x-{trade_date}-force"
+    stale_prefix = f"tg-x-{trade_date}-"  # every exit id for this position: force rungs AND the window ladder
     this_rung_prefix = f"tg-x-{trade_date}-{rung_tag}-{underlying.lower()}-"
     for o in open_orders:
         coid = str(o.get("client_order_id") or "")
@@ -582,6 +686,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
                     _journal_exit_fill(canceled, position_id, underlying, "force_close", qty, mid_debit,
                                         short_c.symbol, long_c.symbol, profile)
                     return {"filled": True, "rung": rung_tag, "order_id": o.get("id"), "raced_stale_fill": True}
+                if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                        short_c.symbol, long_c.symbol, profile, position_id, context="force_stale_cancel"):
+                    _append_journal("force_close_stale_unresolved", level="critical", position_id=position_id,
+                                     client_order_id=coid, status=canceled.get("status"),
+                                     filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                    return {"filled": False, "failed": True, "rung": rung_tag, "stale_unresolved": coid}
                 _append_journal("force_close_stale_canceled", position_id=position_id, client_order_id=coid,
                                  dry_run=dry_run)
 
@@ -589,10 +699,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
     body = spread.closing_mleg_body(plan, qty, price)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid, reason="force_close",
                      rung=rung_tag, action=action, stage="s0", limit_price=price, qty=qty)
-    order, act = _lookup_or_submit(cid, body["legs"], body["limit_price"], qty, profile, dry_run)
+    order, act, cid = _lookup_or_submit(cid, body["legs"], body["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{act}", position_id=position_id, client_order_id=cid, order_id=order.get("id"))
     if act == "dry_run":
         return {"filled": False, "dry_run": True, "rung": rung_tag}
+    if act == "failed":
+        return {"filled": False, "failed": True, "rung": rung_tag}
 
     if order.get("status") == "filled":
         _journal_exit_fill(order, position_id, underlying, "force_close", qty, price,
@@ -649,7 +761,7 @@ def _evaluate_and_exit_position(entry_rec, option_positions, gov, now, profile, 
     if reason.startswith("force_close"):
         result = _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run, open_orders)
     else:
-        result = _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events)
+        result = _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run, journal_events, open_orders)
     return {"position_id": position_id, "signal": reason, **result}
 
 
@@ -671,10 +783,42 @@ def _journal_entry_fill(order, candidate, qty, window_label, trade_date, underly
     )
 
 
-def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, dry_run):
+def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, dry_run, open_orders):
     underlying = candidate.underlying
     position_id = _position_id(trade_date, window_label, underlying)
     started = time.monotonic()
+
+    # Cancel any entry order still open under this window's id prefix
+    # BEFORE the walk starts. The stale-id walk in _lookup_or_submit only
+    # resolves the id it is on: a tick that submitted s0, canceled it,
+    # submitted s1 and then died mid-poll leaves s1 live (a DAY order), and
+    # the next tick's walk went s0 -> stale -> s0r2 -> 404 -> submit --
+    # two live entry orders on one underlying, both fillable (found in
+    # review 30 Aug 2026 against the live-verified fact that
+    # get-by-client-id keeps answering a canceled id). Mirrors
+    # _attempt_force_close's stale-rung cancel; a cancel that loses the
+    # race to a fill is journaled as this window's fill and ends the attempt.
+    # Scoped to today + this underlying, NOT this window: an entry order is
+    # a DAY order, so one orphaned at 10:41 is still live at 13:30, when
+    # filled_underlyings_today (fills only) makes the underlying eligible
+    # again and a window-scoped prefix walked straight past it.
+    stale_prefix = f"tg-e-{trade_date}-"
+    for o in open_orders:
+        coid = str(o.get("client_order_id") or "")
+        if coid.startswith(stale_prefix) and f"-{underlying.lower()}-" in coid and o.get("id"):
+            canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
+            if canceled.get("status") == "filled":
+                stage = coid.rsplit("-", 1)[-1]
+                _journal_entry_fill(canceled, candidate, qty, window_label, trade_date, underlying, stage,
+                                     time.monotonic() - started, candidate.credit)
+                return {"filled": True, "stage": stage, "order_id": o.get("id"), "raced_stale_fill": True}
+            if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
+                    candidate.short.symbol, candidate.long.symbol, profile, position_id, context="entry_stale_cancel"):
+                _append_journal("entry_stale_unresolved", level="critical", position_id=position_id,
+                                 client_order_id=coid, status=canceled.get("status"),
+                                 filled_qty=canceled.get("filled_qty"), dry_run=dry_run)
+                return {"filled": False, "failed": True, "stage": "sweep", "stale_unresolved": coid}
+            _append_journal("entry_stale_canceled", position_id=position_id, client_order_id=coid, dry_run=dry_run)
 
     body0 = spread.mleg_body(candidate, qty)
     cid0 = spread.client_order_id("e", trade_date, window_label, underlying, "s0")
@@ -686,10 +830,12 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
                      expiry=candidate.expiry, short_symbol=candidate.short.symbol,
                      long_symbol=candidate.long.symbol, width=candidate.width, qty=qty,
                      limit_price=body0["limit_price"])
-    order, action = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
+    order, action, cid0 = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
     _append_journal(f"entry_{action}", position_id=position_id, client_order_id=cid0, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True, "stage": "s0"}
+    if action == "failed":
+        return {"filled": False, "failed": True, "stage": "s0"}
 
     order = _wait_for_terminal(order, ENTRY_FIRST_LIMIT_WAIT_SECONDS, profile, gov)
     if order.get("status") == "filled":
@@ -720,10 +866,12 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
                      expiry=candidate.expiry, short_symbol=candidate.short.symbol,
                      long_symbol=candidate.long.symbol, width=candidate.width, qty=qty,
                      limit_price=limit_price1)
-    order, action = _lookup_or_submit(cid1, body0["legs"], limit_price1, qty, profile, dry_run)
+    order, action, cid1 = _lookup_or_submit(cid1, body0["legs"], limit_price1, qty, profile, dry_run)
     _append_journal(f"entry_{action}", position_id=position_id, client_order_id=cid1, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True, "stage": "s1"}
+    if action == "failed":
+        return {"filled": False, "failed": True, "stage": "s1"}
 
     remaining = max(ENTRY_LADDER_TOTAL_BUDGET_SECONDS - ENTRY_FIRST_LIMIT_WAIT_SECONDS, 1)
     order = _wait_for_terminal(order, remaining, profile, gov)
@@ -746,7 +894,7 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
 
 def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_state,
                              open_positions_journal, entries_today, filled_underlyings_today,
-                             consecutive_exceptions, halt_active):
+                             consecutive_exceptions, halt_active, open_orders):
     trade_date = now.astimezone(ET).strftime("%Y%m%d")
 
     try:
@@ -760,6 +908,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         try:
             underlying_states[u] = market.build_underlying_state(
                 u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile=profile,
+                rv_lookback_days=gov["vrp"]["realised_vol_lookback_days"],
             )
         except market.MarketDataError as exc:
             _append_journal("no_trade", reason="underlying_data_unavailable", underlying=u, detail=str(exc))
@@ -835,7 +984,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         _append_journal("no_trade", reason=last_reason, underlying=underlying)
         return {"attempted": True, "filled": False, "reason": last_reason}
 
-    ladder_result = _attempt_entry(winner, winner_qty, window_label, trade_date, now, gov, profile, dry_run)
+    ladder_result = _attempt_entry(winner, winner_qty, window_label, trade_date, now, gov, profile, dry_run, open_orders)
     return {"attempted": True, "underlying": underlying, **ladder_result}
 
 
@@ -877,7 +1026,7 @@ def _git_publish(now):
     on an ephemeral CI runner -- an unpublished HALT.json is silently lost
     the moment that runner is destroyed, defeating every HALT trigger in
     this file exactly the way an unpublished journal entry defeats the
-    risk caps (see the publish_failed check in _run_tick_body). HALT.json
+    risk caps (see the publish_failed check in _run_tick_guarded). HALT.json
     is only ever git-added when it exists, and its content is stable
     (only _trigger_halt writes to it after the first tick), so this does
     not create a commit every tick -- only when a halt is newly set."""
@@ -927,13 +1076,45 @@ def _run_tick_guarded(now, dry_run, profile):
     any unexpected failure below is caught, journaled (so
     gate_cumulative_drawdown's consecutive_exceptions count sees it on the
     next tick), and returned as ok=False. The CLI entrypoint decides the
-    process exit code from that field."""
+    process exit code from that field.
+
+    The git publish lives here, after the try/except, and not in the
+    body's happy path (where it sat until 30 Aug 2026): a tick that raised,
+    or aborted at not_paper_abort, journaled tick_exception / tick_completed
+    ok=False / a fresh HALT.json / an entry_submitted on the ephemeral
+    runner and returned without committing, so none of it reached the next
+    tick's checkout -- the consecutive-exception halt could never trip on
+    CI, and a crash after a submit left a live order no later tick knew
+    about. Every path publishes exactly once."""
     try:
-        return _run_tick_body(now, dry_run, profile)
+        summary = _run_tick_body(now, dry_run, profile)
     except Exception as exc:
         _append_journal("tick_exception", level="critical", error=f"{type(exc).__name__}: {exc}")
         _append_journal("tick_completed", ok=False, error=str(exc))
-        return {"ok": False, "now": now.isoformat(), "error": str(exc)}
+        summary = {"ok": False, "now": now.isoformat(), "error": str(exc)}
+
+    git_result = _git_publish(now)
+
+    # A commit that failed to push is not "transport, never load-bearing" --
+    # this tick wrote real state (an entry_filled/exit_filled/HALT-relevant
+    # event) that a future tick's fresh checkout will never see. That
+    # silently defeats every journal-derived risk cap (entries_today,
+    # open_positions, ...). Surface it as a tick failure: main() exits
+    # non-zero (a red GitHub Actions run a human notices) and, once this
+    # event DOES reach a future successful push, consecutive_exceptions
+    # sees it too.
+    # "error" covers a git subprocess that raised AFTER the commit (a push
+    # timeout): _git_publish reports committed=False then, and the tick
+    # would otherwise go green with its commit stranded on the runner.
+    publish_failed = ("error" in git_result) or (bool(git_result.get("committed")) and not git_result.get("pushed"))
+    if publish_failed:
+        note = ("journal committed locally but push failed" if git_result.get("committed")
+                else f"git raised before the push completed: {git_result.get('error')!r}")
+        _append_journal("journal_publish_failed", level="critical", git_result=git_result,
+                         note=note + " -- this runner's state may never reach the next tick's fresh checkout")
+        summary["ok"] = False
+    summary["git"] = git_result
+    return summary
 
 
 def _run_tick_body(now, dry_run, profile):
@@ -973,7 +1154,7 @@ def _run_tick_body(now, dry_run, profile):
 
     # The journal is only durable once git-published; on an ephemeral CI
     # runner, a tick whose push silently failed (see the git-publish check
-    # at the end of this function) leaves its entry_filled event invisible
+    # in _run_tick_guarded) leaves its entry_filled event invisible
     # to every future tick's fresh checkout. If the broker shows an open
     # option leg no currently-known position accounts for, that is exactly
     # what a lost entry_filled looks like -- HALT rather than silently
@@ -1032,34 +1213,19 @@ def _run_tick_body(now, dry_run, profile):
             entry_result = _attempt_entry_pipeline(
                 window_label, now, gov, profile, dry_run, account_state,
                 open_positions_journal, entries_today, filled_underlyings_today,
-                consecutive_exceptions, halt_active,
+                consecutive_exceptions, halt_active, open_orders,
             )
 
-    # Step 11
+    # Step 11 -- the git publish is _run_tick_guarded's, so it also runs
+    # when this function raises or aborts at not_paper_abort.
     _append_journal(
         "tick_completed", ok=True, halt_active=halt_active, orphan_symbols=orphan_symbols,
         exits=len(exits_this_tick), entry_attempted=entry_result.get("attempted", False),
     )
-    git_result = _git_publish(now)
-
-    # A commit that failed to push is not "transport, never load-bearing" --
-    # this tick wrote real state (an entry_filled/exit_filled/HALT-relevant
-    # event) that a future tick's fresh checkout will never see. That
-    # silently defeats every journal-derived risk cap (entries_today,
-    # open_positions, ...). Surface it as a tick failure: main() exits
-    # non-zero (a red GitHub Actions run a human notices) and, once this
-    # event DOES reach a future successful push, consecutive_exceptions
-    # sees it too.
-    publish_failed = bool(git_result.get("committed")) and not git_result.get("pushed")
-    if publish_failed:
-        _append_journal("journal_publish_failed", level="critical", git_result=git_result,
-                         note="journal committed locally but push failed -- this runner's state may "
-                              "never reach the next tick's fresh checkout")
-
     return {
-        "ok": not publish_failed, "now": now.isoformat(), "halt_active": halt_active,
+        "ok": True, "now": now.isoformat(), "halt_active": halt_active,
         "orphan_symbols": orphan_symbols, "exits": exits_this_tick,
-        "entry": entry_result, "git": git_result,
+        "entry": entry_result,
     }
 
 
@@ -1078,7 +1244,15 @@ def main():
                               "reads, real HALT triggers, and a real call to Anthropic via brain.propose")
     parser.add_argument("--profile", default="submission",
                          help="Alpaca CLI profile to trade against (default: submission)")
+    parser.add_argument("--local-live", action="store_true",
+                         help="allow a NON-dry-run tick outside GitHub Actions. Off by default: a local live "
+                              "tick overlapping the runner's tick cancels the runner's working order mid-ladder "
+                              "(the sibling sweep) and can leave two live orders on one underlying")
     args = parser.parse_args()
+
+    if not args.dry_run and os.environ.get("GITHUB_ACTIONS") != "true" and not args.local_live:
+        raise SystemExit("refusing a live tick outside GitHub Actions -- pass --dry-run, or --local-live "
+                         "only while the cron is halted (data/HALT.json active) or the market is closed")
 
     now = datetime.now(ET)
     summary = run_tick(now=now, dry_run=args.dry_run, profile=args.profile)

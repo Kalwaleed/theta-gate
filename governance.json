@@ -76,10 +76,11 @@
 
   "vrp": {
     "_comment": "The only edge this strategy claims. Verified live: a fairly priced chain has zero arithmetic edge, negative by exactly the bid-ask cost. Sell premium only when it is actually rich.",
-    "realised_vol_lookback_days": 20,
+    "_lookback_comment": "PK decision, 30 Aug 2026 (option C in docs/ANALYSIS-2026-08-30.md): 20 -> 10 so the realised-vol window matches the 6-9 DTE tenor being sold. The 30 Aug audit found the gate comparing the front of a contango vol curve against a 20-day RV still carrying the 3-4 Aug rally days: on Friday's marks it vetoed every SPY and QQQ candidate for Mon-Tue (SPY IV 9.9-10.1% vs RV20 10.4%; QQQ 14.8-15.2% vs 18.2%). At 10 days: SPY +2.1..+2.3 pts, QQQ +1.3..+1.7.",
+    "realised_vol_lookback_days": 10,
     "require_atm_iv_gte_realised_vol": true,
-    "_min_vrp_points_comment": "Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check to a 2.0-vol-point margin -- IV barely above RV is noise, not a priced premium.",
-    "min_vrp_points": 2.0
+    "_min_vrp_points_comment": "Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check to a 2.0-vol-point margin -- IV barely above RV is noise, not a priced premium. 30 Aug 2026 (PK, option C): re-based to 1.0 together with the 10-day window above; the 2.0 cushion was sized against a 20-day RV. Chosen with Friday's data in view -- disclosed as such in the write-up.",
+    "min_vrp_points": 1.0
   },
 
   "environment": {

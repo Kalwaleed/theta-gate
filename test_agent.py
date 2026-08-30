@@ -4,13 +4,17 @@ live on 26 Aug 2026, the same chain that produced the real fill proving the
 mleg body shape. See docs in the plan for the probe.
 """
 
-from datetime import datetime
+import math
+import statistics
+import subprocess
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 import alpaca
+import market
 import risk
 import spread
 
@@ -537,3 +541,248 @@ def test_assert_paper_rejects_wrong_active_profile(monkeypatch):
     with patch("alpaca.subprocess.run", return_value=_mock_doctor_result("some_other_profile")):
         with pytest.raises(alpaca.NotPaperError, match="did not confirm active profile"):
             alpaca.assert_paper(profile="paper")
+
+
+# ---------------------------------------------------------------------------
+# alpaca.py / market.py — option chain completeness (finding F1). Verified
+# live 30 Aug 2026 (CLI 0.0.13): --limit 100 returned 100 snapshots of ONE
+# expiry with next_page_token set; --limit 1000 returns the whole SPY 6-9
+# DTE put window (330 snapshots, 2 expiries) in one page.
+# ---------------------------------------------------------------------------
+
+def _chain_page(symbol, token):
+    return {
+        "snapshots": {symbol: {"latestQuote": {"bp": 1.0, "ap": 1.1, "t": "2026-08-28T19:59:56Z"},
+                               "greeks": {"delta": -0.2}, "impliedVolatility": 0.2}},
+        "next_page_token": token,
+    }
+
+
+def test_option_chain_follows_next_page_token_and_uses_limit_1000():
+    pages = [_chain_page("SPY260908P00700000", "tok"), _chain_page("SPY260909P00700000", "")]
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", side_effect=pages) as run_mock:
+        chain = alpaca.option_chain("SPY", option_type="put")
+
+    assert set(chain["snapshots"]) == {"SPY260908P00700000", "SPY260909P00700000"}
+    assert {c.expiry for c in spread.parse_chain(chain["snapshots"])} == {"2026-09-08", "2026-09-09"}
+    assert chain["pages"] == 2 and chain["next_page_token"] is None
+
+    first, second = (list(c.args) for c in run_mock.call_args_list)
+    assert first[first.index("--limit") + 1] == "1000"
+    assert "--page-token" not in first
+    assert second[second.index("--page-token") + 1] == "tok"
+
+
+def test_option_chain_passes_strike_window_flags():
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", return_value={"snapshots": {}, "next_page_token": ""}) as run_mock:
+        alpaca.option_chain("SPY", option_type="put", strike_gte=690.5, strike_lte=785.2)
+    args = list(run_mock.call_args.args)
+    assert args[args.index("--strike-price-gte") + 1] == "690.5"
+    assert args[args.index("--strike-price-lte") + 1] == "785.2"
+
+
+def test_option_chain_raises_on_page_without_snapshots():
+    # The CLI prints error JSON on stdout too -- a 422 body must never
+    # parse as an empty chain (which would read as "no candidates" and,
+    # worse, "leg not found" on an exit).
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", return_value={"code": 40010001, "error": "x", "status": 422}):
+        with pytest.raises(RuntimeError, match="40010001"):
+            alpaca.option_chain("SPY", option_type="put")
+
+
+def test_build_underlying_state_passes_strike_window_around_spot():
+    now = datetime(2026, 8, 31, 10, 31, tzinfo=ET)
+    bars = [
+        {"t": f"{(now.date() - timedelta(days=i)).isoformat()}T04:00:00Z", "c": 760.0 + i}
+        for i in range(1, 26)  # 25 sessions, all strictly before now's ET date
+    ]
+    chain_mock = MagicMock(return_value={"snapshots": {}})
+    with patch("market.alpaca.latest_quote", return_value={"quote": {"bp": 769.25, "ap": 769.57, "t": "2026-08-28T20:00:00Z"}}), \
+         patch("market.alpaca.stock_bars", return_value={"bars": bars}), \
+         patch("market.alpaca.option_chain", chain_mock):
+        state = market.build_underlying_state("SPY", now=now, dte_min=6, dte_max=9, profile="submission")
+
+    assert state["spot"] == pytest.approx(769.41)
+    kwargs = chain_mock.call_args.kwargs
+    assert kwargs["strike_gte"] == round(769.41 * 0.90, 2)
+    assert kwargs["strike_lte"] == round(769.41 * 1.02, 2)
+    assert kwargs["expiration_date_gte"] == "2026-09-06"
+    assert kwargs["expiration_date_lte"] == "2026-09-09"
+    assert kwargs["option_type"] == "put"
+
+
+# ---------------------------------------------------------------------------
+# market.compute_rv20 -- the window is governance vrp.realised_vol_lookback_days
+# (audit finding strategy-pnl-1: the key was rendered but read by nothing).
+# No behaviour change at the current value: lookback 20 == the old hardcoded
+# 21-session window.
+# ---------------------------------------------------------------------------
+
+RV_NOW = datetime(2026, 8, 31, 10, 31, tzinfo=ET)
+# 25 complete sessions, oldest first, non-monotone so the window actually matters.
+RV_CLOSES = [760.0 + ((i * 7) % 11) - 5 for i in range(25)]
+
+
+def _rv_bars(closes):
+    n = len(closes)
+    return [
+        {"t": f"{(RV_NOW.date() - timedelta(days=n - i)).isoformat()}T04:00:00Z", "c": c}
+        for i, c in enumerate(closes)
+    ]
+
+
+def _rv_expected(closes):
+    log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    return statistics.stdev(log_returns) * math.sqrt(252)  # N-1, same as compute_rv20
+
+
+def test_compute_rv20_default_matches_previous_21_session_window():
+    bars = _rv_bars(RV_CLOSES)
+    default_rv, default_prior = market.compute_rv20(bars, RV_NOW)
+    kwarg_rv, kwarg_prior = market.compute_rv20(bars, RV_NOW, lookback_days=20)
+    assert default_rv == kwarg_rv and default_prior == kwarg_prior
+    assert default_prior == RV_CLOSES[-1]
+    assert abs(default_rv - _rv_expected(RV_CLOSES[-21:])) < 1e-12
+
+
+def test_compute_rv20_short_lookback_uses_fewer_sessions():
+    rv, prior = market.compute_rv20(_rv_bars(RV_CLOSES), RV_NOW, lookback_days=10)
+    assert abs(rv - _rv_expected(RV_CLOSES[-11:])) < 1e-12
+    assert prior == RV_CLOSES[-1]  # prior_close is independent of the window
+    assert market.compute_rv20(_rv_bars(RV_CLOSES[-9:]), RV_NOW, lookback_days=10) == (None, None)
+
+
+def test_build_underlying_state_passes_lookback():
+    rv_mock = MagicMock(return_value=(0.1, 700.0))
+    with patch("market.alpaca.latest_quote", return_value={"quote": {"bp": 769.25, "ap": 769.57, "t": "2026-08-28T20:00:00Z"}}), \
+         patch("market.alpaca.stock_bars", return_value={"bars": _rv_bars(RV_CLOSES)}), \
+         patch("market.alpaca.option_chain", return_value={"snapshots": {}}), \
+         patch("market.compute_rv20", rv_mock):
+        state = market.build_underlying_state("SPY", now=RV_NOW, dte_min=6, dte_max=9, rv_lookback_days=10)
+    assert rv_mock.call_args.kwargs["lookback_days"] == 10
+    assert state["realised_vol_20d"] == 0.1 and state["prior_close"] == 700.0
+
+
+def test_build_underlying_state_reports_real_session_count_when_short():
+    with patch("market.alpaca.latest_quote", return_value={"quote": {"bp": 769.25, "ap": 769.57, "t": "2026-08-28T20:00:00Z"}}), \
+         patch("market.alpaca.stock_bars", return_value={"bars": _rv_bars(RV_CLOSES[-9:])}), \
+         patch("market.alpaca.option_chain", return_value={"snapshots": {}}):
+        with pytest.raises(market.MarketDataError, match="fewer than 11 complete daily sessions for RV10"):
+            market.build_underlying_state("SPY", now=RV_NOW, dte_min=6, dte_max=9, rv_lookback_days=10)
+
+
+# ---------------------------------------------------------------------------
+# alpaca.py -- the CLI's real error contract (findings F2/F19/F20). Verified
+# live 30 Aug 2026 (CLI 0.0.13): an API error is an EMPTY stdout, rc 1, and
+# the error JSON on STDERR; the old stdout-only parse raised 'non-JSON' on
+# every order-lookup miss, so no order could ever be placed.
+# ---------------------------------------------------------------------------
+
+NOT_FOUND_404 = ('{"code": 40410000, "error": "order not found for tg-e-x", "hint": "", "method": "GET", '
+                 '"path": "/v2/orders:by_client_order_id", "request_id": "r1", "status": 404}')
+DUPLICATE_422 = ('{"code": 40010001, "error": "client_order_id must be unique", "hint": "Validation error", '
+                 '"method": "POST", "path": "/v2/orders", "request_id": "r2", "status": 422}')
+
+
+def _cli(returncode, stdout, stderr=""):
+    """Stands in for alpaca.subprocess.run with the real CLI's contract."""
+    return lambda cmd, **kw: subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+
+def _no_paper():
+    return patch.object(alpaca, "assert_paper", lambda profile="submission": None)
+
+
+def test_run_reads_error_json_from_stderr_and_raises():
+    with patch("alpaca.subprocess.run", _cli(1, "", NOT_FOUND_404)):
+        with pytest.raises(alpaca.AlpacaCLIError, match="rc=1") as excinfo:
+            alpaca._run("order", "get")
+        assert excinfo.value.payload["status"] == 404 and excinfo.value.returncode == 1
+        assert alpaca._run("order", "get", allow_error=True)["status"] == 404
+
+
+def test_run_slices_a_stderr_nag_off_the_error_json():
+    nag = "warning: alpaca 0.0.14 is available\n" + NOT_FOUND_404
+    with patch("alpaca.subprocess.run", _cli(1, "", nag)):
+        assert alpaca._run("order", "get", allow_error=True)["code"] == 40410000
+
+
+def test_run_empty_stdout_rc0_is_empty_dict():
+    with patch("alpaca.subprocess.run", _cli(0, "", "")):
+        assert alpaca._run("order", "cancel") == {}
+
+
+def test_run_non_json_raises_runtime_error_with_rc():
+    with patch("alpaca.subprocess.run", _cli(1, "boom", "")):
+        with pytest.raises(RuntimeError, match="rc=1") as excinfo:
+            alpaca._run("clock")
+    assert not isinstance(excinfo.value, alpaca.AlpacaCLIError)
+
+
+def test_get_order_by_client_id_404_is_a_miss():
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", NOT_FOUND_404)):
+        assert alpaca.get_order_by_client_id("tg-e-x") is None
+
+
+def test_get_order_by_client_id_non_404_error_raises():
+    unauthorized = NOT_FOUND_404.replace('"status": 404', '"status": 401')
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", unauthorized)):
+        with pytest.raises(alpaca.AlpacaCLIError):
+            alpaca.get_order_by_client_id("tg-e-x")
+
+
+def test_submit_mleg_returns_rejection_body():
+    legs = [{"symbol": "S"}, {"symbol": "L"}]
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", DUPLICATE_422)):
+        response = alpaca.submit_mleg(legs, limit_price="-0.60", client_order_id="tg-e-x")
+    assert response["error"] == "client_order_id must be unique" and "id" not in response
+
+
+def test_cancel_order_returns_empty_dict_on_204():
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(0, "{}", "")):
+        assert alpaca.cancel_order("1ee5812d") == {}
+
+
+# --- 30 Aug 2026 review hardening: CLI parse edge cases, chain page cap ----
+
+def _cp(returncode, stdout="", stderr=""):
+    import subprocess as _sp
+    return _sp.CompletedProcess(["alpaca"], returncode, stdout, stderr)
+
+
+def test_run_ignores_trailing_text_after_error_json():
+    body = '{"code": 40410000, "error": "order not found for x", "status": 404}\nhint: run alpaca doctor\n'
+    with patch("alpaca.subprocess.run", return_value=_cp(1, "", body)):
+        assert alpaca._run("order", "get", allow_error=True)["status"] == 404
+
+
+def test_get_order_by_client_id_hit_without_id_raises(monkeypatch):
+    monkeypatch.setattr(alpaca, "assert_paper", lambda profile="submission": None)
+    for stdout in ("{}", '{"message": "too many requests", "status": 429}'):
+        with patch("alpaca.subprocess.run", return_value=_cp(0, stdout, "")):
+            with pytest.raises(alpaca.AlpacaCLIError):
+                alpaca.get_order_by_client_id("tg-e-x")
+
+
+def test_option_chain_raises_when_page_cap_is_exhausted(monkeypatch):
+    monkeypatch.setattr(alpaca, "assert_paper", lambda profile="submission": None)
+    endless = {"snapshots": {"SPY260908P00700000": {}}, "next_page_token": "more"}
+    with patch.object(alpaca, "_run", return_value=endless) as run_mock:
+        with pytest.raises(RuntimeError, match="exceeded"):
+            alpaca.option_chain("SPY", "put", expiration_date="2026-09-08")
+    assert run_mock.call_count == 20
+
+
+def test_parse_chain_keeps_zero_bid_only_when_allowed():
+    snaps = {
+        "SPY260908P00695000": {"latestQuote": {"bp": 0, "ap": 0.05, "t": "2026-08-28T19:59:56Z"}, "greeks": {"delta": -0.05}},
+        "SPY260908P00700000": {"latestQuote": {"bp": 0.4, "ap": 0.5, "t": "2026-08-28T19:59:56Z"}, "greeks": {"delta": -0.1}},
+        "SPY260908P00690000": {"latestQuote": {"bp": 0.1, "ap": None, "t": "2026-08-28T19:59:56Z"}},  # no ask: never kept
+    }
+    assert [c.symbol for c in spread.parse_chain(snaps)] == ["SPY260908P00700000"]
+    kept = {c.symbol: c for c in spread.parse_chain(snaps, allow_zero_bid=True)}
+    assert set(kept) == {"SPY260908P00695000", "SPY260908P00700000"}
+    assert kept["SPY260908P00695000"].bid == 0.0 and kept["SPY260908P00695000"].mid == 0.025
