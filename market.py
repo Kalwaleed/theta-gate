@@ -264,9 +264,13 @@ def build_underlying_state(
     now_date = now.astimezone(ET).date()
     low = (now_date + timedelta(days=dte_min)).isoformat()
     high = (now_date + timedelta(days=dte_max)).isoformat()
+    # Puts only: band strikes sit 1-4 % below spot and the long leg $5
+    # further; compute_atm_iv needs one strike >= spot; 10 % below covers a
+    # 2 % shock plus width. Windowed so the whole DTE range stays one page.
     chain = alpaca.option_chain(
         underlying, option_type="put",
         expiration_date_gte=low, expiration_date_lte=high,
+        strike_gte=round(spot * 0.90, 2), strike_lte=round(spot * 1.02, 2),
         profile=profile,
     )
     contracts = spread.parse_chain(chain.get("snapshots", {}))

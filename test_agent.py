@@ -4,13 +4,14 @@ live on 26 Aug 2026, the same chain that produced the real fill proving the
 mleg body shape. See docs in the plan for the probe.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 import alpaca
+import market
 import risk
 import spread
 
@@ -537,3 +538,74 @@ def test_assert_paper_rejects_wrong_active_profile(monkeypatch):
     with patch("alpaca.subprocess.run", return_value=_mock_doctor_result("some_other_profile")):
         with pytest.raises(alpaca.NotPaperError, match="did not confirm active profile"):
             alpaca.assert_paper(profile="paper")
+
+
+# ---------------------------------------------------------------------------
+# alpaca.py / market.py — option chain completeness (finding F1). Verified
+# live 30 Aug 2026 (CLI 0.0.13): --limit 100 returned 100 snapshots of ONE
+# expiry with next_page_token set; --limit 1000 returns the whole SPY 6-9
+# DTE put window (330 snapshots, 2 expiries) in one page.
+# ---------------------------------------------------------------------------
+
+def _chain_page(symbol, token):
+    return {
+        "snapshots": {symbol: {"latestQuote": {"bp": 1.0, "ap": 1.1, "t": "2026-08-28T19:59:56Z"},
+                               "greeks": {"delta": -0.2}, "impliedVolatility": 0.2}},
+        "next_page_token": token,
+    }
+
+
+def test_option_chain_follows_next_page_token_and_uses_limit_1000():
+    pages = [_chain_page("SPY260908P00700000", "tok"), _chain_page("SPY260909P00700000", "")]
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", side_effect=pages) as run_mock:
+        chain = alpaca.option_chain("SPY", option_type="put")
+
+    assert set(chain["snapshots"]) == {"SPY260908P00700000", "SPY260909P00700000"}
+    assert {c.expiry for c in spread.parse_chain(chain["snapshots"])} == {"2026-09-08", "2026-09-09"}
+    assert chain["pages"] == 2 and chain["next_page_token"] is None
+
+    first, second = (list(c.args) for c in run_mock.call_args_list)
+    assert first[first.index("--limit") + 1] == "1000"
+    assert "--page-token" not in first
+    assert second[second.index("--page-token") + 1] == "tok"
+
+
+def test_option_chain_passes_strike_window_flags():
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", return_value={"snapshots": {}, "next_page_token": ""}) as run_mock:
+        alpaca.option_chain("SPY", option_type="put", strike_gte=690.5, strike_lte=785.2)
+    args = list(run_mock.call_args.args)
+    assert args[args.index("--strike-price-gte") + 1] == "690.5"
+    assert args[args.index("--strike-price-lte") + 1] == "785.2"
+
+
+def test_option_chain_raises_on_page_without_snapshots():
+    # The CLI prints error JSON on stdout too -- a 422 body must never
+    # parse as an empty chain (which would read as "no candidates" and,
+    # worse, "leg not found" on an exit).
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch.object(alpaca, "_run", return_value={"code": 40010001, "error": "x", "status": 422}):
+        with pytest.raises(RuntimeError, match="40010001"):
+            alpaca.option_chain("SPY", option_type="put")
+
+
+def test_build_underlying_state_passes_strike_window_around_spot():
+    now = datetime(2026, 8, 31, 10, 31, tzinfo=ET)
+    bars = [
+        {"t": f"{(now.date() - timedelta(days=i)).isoformat()}T04:00:00Z", "c": 760.0 + i}
+        for i in range(1, 26)  # 25 sessions, all strictly before now's ET date
+    ]
+    chain_mock = MagicMock(return_value={"snapshots": {}})
+    with patch("market.alpaca.latest_quote", return_value={"quote": {"bp": 769.25, "ap": 769.57, "t": "2026-08-28T20:00:00Z"}}), \
+         patch("market.alpaca.stock_bars", return_value={"bars": bars}), \
+         patch("market.alpaca.option_chain", chain_mock):
+        state = market.build_underlying_state("SPY", now=now, dte_min=6, dte_max=9, profile="submission")
+
+    assert state["spot"] == pytest.approx(769.41)
+    kwargs = chain_mock.call_args.kwargs
+    assert kwargs["strike_gte"] == round(769.41 * 0.90, 2)
+    assert kwargs["strike_lte"] == round(769.41 * 1.02, 2)
+    assert kwargs["expiration_date_gte"] == "2026-09-06"
+    assert kwargs["expiration_date_lte"] == "2026-09-09"
+    assert kwargs["option_type"] == "put"

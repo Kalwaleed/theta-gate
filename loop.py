@@ -372,8 +372,17 @@ def _extract_actual_price(order, fallback):
 def _fresh_close_quotes(underlying, expiry, short_symbol, long_symbol, profile):
     """HARD_SAFETY (risk.resolve_direction): V1 is put-only, so every open
     Theta Gate position is a bull_put vertical -- option_type is always
-    'put' here."""
-    chain = alpaca.option_chain(underlying, option_type="put", expiration_date=expiry, profile=profile)
+    'put' here.
+
+    Windowed to the two leg strikes (+/- 0.50): verified live 30 Aug 2026
+    that the old unwindowed --limit 100 page could omit a leg, which made
+    this raise and the exit (Thursday's flatten included) silently skip as
+    exit_quote_unavailable."""
+    strikes = [spread._strike_from_occ(short_symbol), spread._strike_from_occ(long_symbol)]
+    chain = alpaca.option_chain(
+        underlying, option_type="put", expiration_date=expiry,
+        strike_gte=min(strikes) - 0.5, strike_lte=max(strikes) + 0.5, profile=profile,
+    )
     contracts = {c.symbol: c for c in spread.parse_chain(chain.get("snapshots", {}))}
     short_c, long_c = contracts.get(short_symbol), contracts.get(long_symbol)
     if short_c is None or long_c is None:
