@@ -3,7 +3,8 @@
 That's what makes this file unit-testable and what makes it the only
 component holding a real decision.
 
-`check_all` runs the eighteen-ish gates in order and returns the first
+`check_all` runs all 21 gates in order (18 state-only, then 3 sized —
+see `_STATE_ONLY_GATES` / `_SIZED_GATES` below) and returns the first
 failure reason, or None if the proposal is clear to submit. First rejection
 wins and is final — no gate is re-evaluated after a veto.
 """
