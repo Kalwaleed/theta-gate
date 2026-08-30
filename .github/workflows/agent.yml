@@ -26,6 +26,10 @@ on:
         description: "Dry run (no live order submission) -- for rehearsal"
         type: boolean
         default: true
+      gate_check:
+        description: "Read-only runner smoke: scripts/live_gate_check.py — market data, chain fetch and ONE billed brain.propose; no orders, no journal, no git"
+        type: boolean
+        default: false
 
 concurrency:
   group: theta-gate-agent
@@ -38,7 +42,9 @@ jobs:
   run:
     name: Run tick
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # One exit ladder can poll up to 60 x ~4 s (each poll re-runs assert_paper: doctor + account get + order get), so 10 min is too tight;
+    # the concurrency group serialises ticks, so a long tick delays the next one and never overlaps it.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -121,6 +127,11 @@ jobs:
           ALPACA_PAPER_TRADE: "true"
           ALPACA_LIVE_TRADE: "false"
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.gate_check }}" = "true" ]; then
+            # Read-only runner smoke: no orders, no journal, no git. Exit with the script's own code.
+            PYTHONPATH=. python3 scripts/live_gate_check.py
+            exit $?
+          fi
           ARGS="--once --profile submission"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
