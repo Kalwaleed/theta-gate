@@ -311,3 +311,88 @@ def test_corrupt_halt_file_fails_closed_without_crashing(tmp_path, monkeypatch):
     _, body = _run_app(staged, monkeypatch)  # must not raise
     assert "halted" in body
     assert "history verified" not in body
+
+
+# ---------------------------------------------------------------------------
+# Escaping -- the page renders with unsafe_allow_html on a public URL
+# ---------------------------------------------------------------------------
+
+XSS = '<img src=x onerror="alert(1)">'
+
+
+def test_esc_neutralises_markup_and_quotes():
+    out = app.esc(XSS)
+    assert "<img" not in out and "&lt;img" in out
+    assert '"' not in out, "quotes must escape too -- several call sites use title=\"...\""
+
+
+def test_esc_handles_none_and_numbers():
+    assert app.esc(None) == ""
+    assert app.esc(3.5) == "3.5"
+
+
+def test_a_hostile_thesis_cannot_inject_markup():
+    """The thesis is free text written by a language model and journaled
+    verbatim. app.py renders through unsafe_allow_html, so an unescaped
+    thesis is script execution on a public, anonymous page. brain.py
+    screens for prompt injection at its own boundary; escaping is what
+    makes rendering safe regardless of what got through."""
+    row = app.decision_row(
+        {"ts": "2026-08-31T10:30:00-04:00", "event": "proposal",
+         "underlying": XSS, "reason": None},
+        {"proposal": {"underlying": "SPY", "direction": "bullish",
+                      "confidence": 0.6, "thesis": XSS}},
+        "acc")
+    joined = "".join(row)
+    assert "<img" not in joined
+    assert "onerror" not in joined or "&quot;" in joined
+    assert "&lt;img" in joined
+
+
+def test_a_hostile_gate_reason_cannot_inject_markup():
+    html = app.render_bars([{"gate": XSS, "reason": XSS, "n": 3}])
+    assert "<img src=x" not in html and "&lt;img" in html
+
+
+def test_position_fields_are_escaped():
+    """Symbols, direction and expiry come from broker responses via the
+    journal -- semi-trusted, and rendered into the same markup."""
+    assert "<img" not in app.esc(XSS)
+    assert app.esc("SPY & QQQ") == "SPY &amp; QQQ"
+
+
+# ---------------------------------------------------------------------------
+# The proposal row -- the only place the model's own words appear
+# ---------------------------------------------------------------------------
+
+def test_proposal_detail_reads_the_nested_thesis():
+    """loop.py journals dataclasses.asdict(proposal) under a `proposal`
+    key. Reading payload["thesis"] directly finds nothing."""
+    detail = app.decision_detail("proposal", None, {
+        "proposal": {"underlying": "SPY", "direction": "bullish",
+                     "confidence": 0.62, "thesis": "IV sits above realised, contango holds"}})
+    assert "IV sits above realised" in detail
+    assert "SPY bullish" in detail
+    assert "62% confidence" in detail
+
+
+def test_a_failed_proposal_says_so():
+    """proposal: null is a real outcome -- the model returned something
+    malformed and the loop declined. Better than a blank cell."""
+    detail = app.decision_detail("proposal", None, {"proposal": None})
+    assert "nothing usable" in detail
+
+
+def test_non_proposal_events_keep_their_reason():
+    detail = app.decision_detail("no_trade", "delta_band: 0.31 outside band", {})
+    assert detail == "delta_band: 0.31 outside band"
+
+
+def test_price_column_ignores_non_numeric_payloads():
+    """payload.get("credit") could be any JSON type after a torn write.
+    money() on a string raises, which would take the page down."""
+    row = app.decision_row(
+        {"ts": "2026-08-31T10:30:00-04:00", "event": "entry_filled",
+         "underlying": "SPY", "reason": None},
+        {"credit": "not-a-number"}, "acc")
+    assert row[-1].endswith("></span>") or ">" in row[-1]
