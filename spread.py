@@ -44,16 +44,21 @@ class SpreadPlan:
     max_loss_dollars: float
 
 
-def parse_chain(raw_snapshots: dict) -> list[Contract]:
+def parse_chain(raw_snapshots: dict, allow_zero_bid: bool = False) -> list[Contract]:
     """raw_snapshots is the `.snapshots` dict from `alpaca data option chain`
     JSON output, keyed by OCC symbol. Contracts with no two-sided quote are
-    dropped — they cannot be traded and cannot be trusted."""
+    dropped — they cannot be traded and cannot be trusted — except when the
+    caller passes allow_zero_bid=True: an OPEN position's far-OTM long leg
+    can legitimately show bid 0.00 late in its life, and dropping it there
+    would leave the position unquotable and its exit (Thursday's flatten
+    included) skipped. An ask is always required."""
     contracts = []
     for symbol, snap in raw_snapshots.items():
         quote = snap.get("latestQuote") or {}
         bid, ask = quote.get("bp"), quote.get("ap")
-        if not bid or not ask:
+        if not ask or (not bid and not allow_zero_bid):
             continue
+        bid = bid or 0.0
         greeks = snap.get("greeks") or {}
         strike = _strike_from_occ(symbol)
         contracts.append(Contract(

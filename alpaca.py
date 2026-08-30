@@ -76,7 +76,10 @@ def _run(*args, profile=None, allow_error=False):
     if not raw and result.returncode == 0:
         return {}
     try:
-        payload = json.loads(raw)
+        # raw_decode: parse the first JSON value and ignore any hint/nag
+        # text the CLI prints AFTER it -- json.loads would reject the whole
+        # thing and turn a plain 404 miss back into 'non-JSON'.
+        payload = json.JSONDecoder().raw_decode(raw)[0]
     except json.JSONDecodeError:
         raise RuntimeError(f"alpaca {' '.join(args)} returned non-JSON (rc={result.returncode}): {raw[:500]}")
     if result.returncode != 0 or (isinstance(payload, dict) and "error" in payload):
@@ -205,6 +208,9 @@ def option_chain(underlying, option_type, expiration_date=None, expiration_date_
         token = page.get("next_page_token")
         if not token:
             break
+    if token:
+        # a chain cut off at the page cap must never read as "no candidates" / "leg not found"
+        raise RuntimeError(f"alpaca option chain for {underlying} exceeded {pages} pages; chain incomplete")
     return {"snapshots": merged, "next_page_token": None, "pages": pages}
 
 
@@ -251,6 +257,12 @@ def get_order_by_client_id(client_order_id, profile="submission"):
         if result.get("status") == 404:
             return None
         raise AlpacaCLIError(args, 1, result)  # the CLI exits 1 on every API error (verified 30 Aug 2026)
+    if not isinstance(result, dict) or not result.get("id"):
+        # A real hit always carries an id (verified 30 Aug 2026). An empty
+        # body or an error-shaped reply without an "error" key (a raw
+        # {"message": ..., "status": 429}) is neither a hit nor a proven
+        # miss -- never adopt it, never treat it as free.
+        raise AlpacaCLIError(args, 1, result)
     return result
 
 
