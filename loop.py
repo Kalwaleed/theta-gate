@@ -771,10 +771,14 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
     # get-by-client-id keeps answering a canceled id). Mirrors
     # _attempt_force_close's stale-rung cancel; a cancel that loses the
     # race to a fill is journaled as this window's fill and ends the attempt.
-    stale_prefix = f"tg-e-{trade_date}-{window_label}-{underlying.lower()}-"
+    # Scoped to today + this underlying, NOT this window: an entry order is
+    # a DAY order, so one orphaned at 10:41 is still live at 13:30, when
+    # filled_underlyings_today (fills only) makes the underlying eligible
+    # again and a window-scoped prefix walked straight past it.
+    stale_prefix = f"tg-e-{trade_date}-"
     for o in open_orders:
         coid = str(o.get("client_order_id") or "")
-        if coid.startswith(stale_prefix) and o.get("id"):
+        if coid.startswith(stale_prefix) and f"-{underlying.lower()}-" in coid and o.get("id"):
             canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
             if canceled.get("status") == "filled":
                 stage = coid.rsplit("-", 1)[-1]

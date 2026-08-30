@@ -335,6 +335,28 @@ def test_attempt_entry_cancels_a_live_sibling_before_the_walk(tmp_path, monkeypa
     assert stale == [base1]
 
 
+def test_attempt_entry_cancels_a_live_order_from_an_earlier_window(tmp_path, monkeypatch):
+    # The 10:40 tick died with s1 live (a DAY order); nothing revisits the
+    # 10:30 window, and filled_underlyings_today counts fills only, so the
+    # 13:30 tick proposes SPY again. Its guard must clear the 10:30 order
+    # before the 13:30 ladder submits beside it.
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    orphan = "tg-e-20260831-1030-spy-s1"
+    s0, s1 = "tg-e-20260831-1330-spy-s0", "tg-e-20260831-1330-spy-s1"
+    open_orders = [{"id": "o-1030", "client_order_id": orphan},
+                   {"id": "o-qqq", "client_order_id": "tg-e-20260831-1030-qqq-s1"}]   # other underlying -- untouched
+    broker_calls = []
+    with _recording_broker({s0: None, s1: None}, broker_calls):
+        result = loop._attempt_entry(PLAN, 1, "1330", "20260831", datetime(2026, 8, 31, 13, 31, tzinfo=ET),
+                                     GOV, "submission", False, open_orders)
+    assert result == {"filled": False, "stage": "s1"}
+    assert broker_calls[0] == ("cancel", "o-1030")
+    assert [c for c in broker_calls if c[0] == "submit"] == [("submit", s0), ("submit", s1)]
+    assert ("cancel", "o-qqq") not in broker_calls
+    stale = [e["client_order_id"] for e in loop._read_journal() if e["event"] == "entry_stale_canceled"]
+    assert stale == [orphan]
+
+
 def test_attempt_entry_journals_a_stale_sibling_that_filled_under_the_cancel(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
     base1 = "tg-e-20260831-1030-spy-s1"
