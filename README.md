@@ -8,7 +8,7 @@ This file is the getting-started guide and team workflow note. The full design d
 
 ## Status
 
-Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `market.py`, `brain.py`, `loop.py`, `store.py`, `app.py`, `governance.json`, `data/events_2026-08-31_2026-09-04.json`, `.github/workflows/agent.yml` — 96/96 tests across `test_agent.py`, `test_loop.py`, `test_store.py` and `test_app.py`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Run the dashboard locally with `streamlit run app.py`. See the Repo layout table in `docs/PLAN.md` for the live checklist.
+Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `market.py`, `brain.py`, `loop.py`, `store.py`, `app.py`, `governance.json`, `data/events_2026-08-31_2026-09-04.json`, `.github/workflows/agent.yml` — 99/99 tests across `test_agent.py`, `test_loop.py`, `test_store.py` and `test_app.py`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Run the dashboard locally with `streamlit run app.py`. See the Repo layout table in `docs/PLAN.md` for the live checklist.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ git clone https://github.com/Kalwaleed/theta-gate.git
 cd theta-gate
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q                          # 96 passed
+pytest -q                          # 99 passed
 ```
 
 You'll also want the Alpaca CLI (`brew install alpacahq/tap/cli`) and your own paper API keys in a local `.env` (copy `env.example` — see the trap documented inside it before you touch `ALPACA_PAPER_TRADE` / `ALPACA_LIVE_TRADE`). `ALPACA_ACCOUNT_ID` is now a hard requirement, not just documentation for judges — `alpaca.assert_paper()` refuses to trade the `submission` profile at all unless it's set and matches the live account, closing a gap where a config mistake could silently point `submission` at the wrong paper account.
