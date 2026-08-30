@@ -20,6 +20,31 @@ on:
     - cron: "30,35,40,45,50,55 13 * * 1-5" # 09:30-09:55 ET
     - cron: "*/5 14-19 * * 1-5" # 10:00-15:55 ET
     - cron: "0 20 * * 1-5" # 16:00 ET (close)
+
+    # ---- TEMPORARY, REVERT AFTER OBSERVING ONE RUN (Sun 30 Aug 2026) ----
+    # Every successful run so far has been workflow_dispatch. The
+    # `schedule:` trigger has never fired once -- these are different
+    # mechanisms, and a green dispatch proves nothing about the cron that
+    # Monday's entire autonomous cycle depends on. GitHub only schedules
+    # from the default branch, so this cannot be proven from a PR branch.
+    #
+    # Sunday (day 0) is deliberate and safe: loop._current_entry_window
+    # returns None on weekends, so the entry pipeline short-circuits
+    # before any chain fetch, any billed brain.propose call, or any order
+    # path. Expect ok: true, entry.attempted: false, one bot journal
+    # commit -- exactly the dispatch rehearsals, via the untested trigger.
+    #
+    # Four attempts because GitHub's documented scheduling delay is 5-30+
+    # minutes and low-priority runs can be dropped entirely; one line
+    # firing late would prove nothing either way.
+    #
+    # Revert with:  git revert <this commit>   -- do it once a scheduled
+    # run appears in `gh run list` with event "schedule".
+    - cron: "20 7 * * 0"
+    - cron: "35 7 * * 0"
+    - cron: "50 7 * * 0"
+    - cron: "5 8 * * 0"
+    # ---- END TEMPORARY ----
   workflow_dispatch:
     inputs:
       dry_run:
