@@ -51,15 +51,20 @@ Also landed: dead orders are no longer adopted (`TERMINAL_UNFILLED_STATUSES`; th
 
 ## Open PRs
 
+Only **#11** and **#12** are still open. Both are held for Thursday.
+
 | PR | Call | Why |
 |---|---|---|
-| **#8** cron probe | **Close** | Right idea — the cron genuinely has never fired — but its probe windows (Sun 07:20–08:05 UTC) have passed, and `* * 0` next recurs 6 Sep, after the deadline. Dead as written; Monday's 09:30 tick proves the same thing for free. |
-| **#10** ECC bundle | **Close** | Byte-identical repeat of the closed #2. No trading code; configures five unpinned `npx -y <pkg>@latest` MCP servers plus a remote endpoint. If it returns a third time, revoke the app's repo access. |
 | **#11** deck | **Hold → Thursday** | Merge once real numbers exist. **Two fixes first:** `SemiBold` → `SmBld` in `theta-gate.tex` (IBM Plex registers that weight as `SmBld`; with the font installed — as it is on PK's Mac — `make` hard-fails and emits no PDF), and the gate count. |
 | **#12** cover | **Hold → Thursday** | Same gate-count fix. Otherwise clean: exactly 1920×1080, safe build script, no secrets in the HTML or the PNG bytes. |
-| **#13** security review | **Close as already done** | Its `.memsearch/` deletion is redundant — `main` untracked and gitignored it in `1e980f4`. **Its audit is worth keeping:** no credential in any blob of any reachable commit; workflow `permissions: contents: write` only; no fork-triggerable injection surface. Lift that table into the write-up before closing. |
 
 **Merged 30 Aug:** #7 (store rebuild race — atomic `os.replace`, mutation-tested) and #9 (dashboard HTML escaping, thesis rows, and a `seq`-join parity fix).
+
+**Closed 30 Aug**, each with the reasoning in the PR thread:
+
+- **#8** cron probe — right idea, expired branch. Its probe windows (Sun 07:20–08:05 UTC) had passed and `* * 0` next recurs 6 Sep, after the deadline. Monday's 09:30 tick proves the same thing for free.
+- **#10** ECC bundle — byte-identical repeat of the closed #2. No trading code; five unpinned `npx -y <pkg>@latest` MCP servers plus a remote endpoint, against a repo whose LLM boundary is deliberately sealed. If it returns a third time, revoke the app's repo access.
+- **#13** security review — its `.memsearch/` deletion was redundant (`main` did it in `1e980f4`). **The audit was preserved** at `docs/SECURITY-REVIEW-2026-08-30.md`: no credential in any blob of any reachable commit, workflow `permissions: contents: write` only, no fork-triggerable injection surface. Lift that table into the write-up.
 
 **The gate count is wrong in three places.** Deck and cover both claim **18 deterministic gates**; the real number is **21** (18 state-only + 3 sized, and `check_all` runs both lists). Root cause is `risk.py`'s own hedge, *"the eighteen-ish gates"* — fix the docstring too, or it propagates into the next artifact.
 
