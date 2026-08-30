@@ -270,3 +270,44 @@ def test_attempt_entry_stops_after_failed_submit(tmp_path, monkeypatch):
     events = [(e["event"], e.get("stage")) for e in loop._read_journal()]
     assert ("entry_intent", "s0") in events and ("entry_intent", "s1") not in events
     assert [ev for ev, _ in events if ev in ("submit_failed", "entry_failed")] == ["submit_failed", "entry_failed"]
+
+
+def test_run_tick_guarded_publishes_once_on_success():
+    with patch("loop._run_tick_body", return_value={"ok": True, "now": "x"}), \
+         patch("loop._git_publish", MagicMock(return_value={"committed": False, "reason": "nothing to commit"})) as pub:
+        summary = loop._run_tick_guarded(datetime(2026, 8, 31, 10, 31, tzinfo=ET), False, "submission")
+    pub.assert_called_once()
+    assert summary["ok"] is True and summary["git"] is pub.return_value
+
+
+def test_run_tick_guarded_publishes_after_exception(tmp_path, monkeypatch):
+    # Until 30 Aug 2026 the publish lived in the body's happy path, so a
+    # raising tick left tick_exception/tick_completed ok=False (and any
+    # HALT.json or entry_submitted before the crash) on the ephemeral
+    # runner -- the three-strike halt could never trip on CI.
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    with patch("loop._run_tick_body", side_effect=RuntimeError("boom")), \
+         patch("loop._git_publish", MagicMock(return_value={"committed": True, "pushed": True, "push_error": None})) as pub:
+        summary = loop._run_tick_guarded(datetime(2026, 8, 31, 10, 31, tzinfo=ET), False, "submission")
+    pub.assert_called_once()
+    assert summary["ok"] is False and summary["error"] == "boom" and summary["git"] is pub.return_value
+    events = loop._read_journal()
+    assert any(e["event"] == "tick_exception" for e in events)
+    assert [e for e in events if e["event"] == "tick_completed"][-1]["ok"] is False
+
+
+def test_run_tick_guarded_marks_publish_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    with patch("loop._run_tick_body", return_value={"ok": True, "now": "x"}), \
+         patch("loop._git_publish", MagicMock(return_value={"committed": True, "pushed": False, "push_error": "x"})):
+        summary = loop._run_tick_guarded(datetime(2026, 8, 31, 10, 31, tzinfo=ET), False, "submission")
+    assert summary["ok"] is False
+    assert any(e["event"] == "journal_publish_failed" for e in loop._read_journal())
+
+
+def test_run_tick_guarded_publishes_on_not_paper_abort():
+    with patch("loop._run_tick_body", return_value={"ok": False, "aborted_at": "assert_paper"}), \
+         patch("loop._git_publish", MagicMock(return_value={"committed": True, "pushed": True, "push_error": None})) as pub:
+        summary = loop._run_tick_guarded(datetime(2026, 8, 31, 10, 31, tzinfo=ET), False, "submission")
+    pub.assert_called_once()
+    assert summary["ok"] is False and summary["aborted_at"] == "assert_paper"
