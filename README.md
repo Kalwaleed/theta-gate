@@ -36,3 +36,7 @@ Five of us are pushing to the same repo, so a couple of habits keep it boring:
 ## Submission
 
 Submitted from Khaled's (`Kalwaleed`) lablab.ai account, matching this repo's owner and the paper trading account required by the hackathon rules.
+
+## Licensing
+
+MIT (see `LICENSE`). `.agents/skills/` redistributes Alpaca's own agent skills under Apache-2.0 — see `.agents/skills/LICENSE` and `NOTICE`.
