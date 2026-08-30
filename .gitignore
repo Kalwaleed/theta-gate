@@ -37,3 +37,27 @@ data/*.db-shm
 
 # memsearch plugin index and session notes -- local only, never published
 .memsearch/
+
+# Agent session state. Written by whatever assistant a teammate happens to
+# run, at whatever depth they run it from -- .omc/ has already appeared at
+# the repo root AND inside deck/ during this build. No leading slash, so
+# this matches at any depth.
+.omc/
+
+# Claude Code's per-machine permission overrides. The shared
+# .claude/settings.json IS committed on purpose -- it is the read-only
+# Alpaca allowlist the team relies on, and the file that explicitly denies
+# `position close-all`. Only the .local. sibling is personal.
+.claude/settings.local.json
+
+# deck/ LaTeX intermediates. theta-gate.pdf itself is committed on purpose
+# (a submission deliverable teammates and judges need without a TeX
+# install), as is cover/cover.png. Everything below regenerates via `make`.
+deck/*.aux
+deck/*.log
+deck/*.nav
+deck/*.out
+deck/*.snm
+deck/*.toc
+deck/*.vrb
+deck/build/
