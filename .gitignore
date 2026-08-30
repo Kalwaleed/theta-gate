@@ -34,3 +34,9 @@ data/*.db-wal
 data/*.db-shm
 
 .gstack/
+
+# Local tooling scratch state -- never publishable. .memsearch holds a
+# machine-local vector index plus session-transcript summaries that carry
+# absolute home-directory paths and transcript UUIDs from whoever ran it.
+# It served no purpose in the repo and this one is going public.
+.memsearch/
