@@ -59,7 +59,7 @@ ET = ZoneInfo("America/New_York")
 JOURNAL_PATH = "data/journal.jsonl"
 DB_PATH = "data/theta_gate.db"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Fixed no_trade reasons emitted by loop.py that are NOT risk-gate vetoes.
 # A gate veto arrives as the gate's own return string, shaped
@@ -114,6 +114,13 @@ CREATE INDEX idx_events_session ON events(session_date);
 -- Derived, one row per position that ever filled. Rebuilt with the rest.
 CREATE TABLE positions (
     position_id     TEXT PRIMARY KEY,
+    -- The seq of the entry_filled/exit_filled row each side came from.
+    -- Joining back on ts instead was a real parity bug: a replay can
+    -- journal the same position_id twice at the SAME timestamp, and the
+    -- ts join then matched both rows, so open_positions() returned two
+    -- open positions where loop._open_positions returns one.
+    entry_seq       INTEGER,
+    exit_seq        INTEGER,
     underlying      TEXT,
     direction       TEXT,
     trade_date      TEXT,
@@ -278,18 +285,18 @@ def _build_positions(conn):
     """
     entries, exits = {}, {}
     for row in conn.execute(
-        "SELECT ts, event, payload FROM events"
+        "SELECT seq, ts, event, payload FROM events"
         " WHERE event IN ('entry_filled','exit_filled') ORDER BY seq"
     ):
         obj = json.loads(row["payload"])
         pid = obj.get("position_id")
         if not pid:
             continue
-        (entries if row["event"] == "entry_filled" else exits)[pid] = (row["ts"], obj)
+        (entries if row["event"] == "entry_filled" else exits)[pid] = (row["seq"], row["ts"], obj)
 
     rows = []
-    for pid, (entry_ts, e) in entries.items():
-        exit_ts, x = exits.get(pid, (None, {}))
+    for pid, (entry_seq, entry_ts, e) in entries.items():
+        exit_seq, exit_ts, x = exits.get(pid, (None, None, {}))
         credit, qty = e.get("credit"), e.get("qty")
         debit = x.get("close_debit")
         pnl = None
@@ -297,7 +304,8 @@ def _build_positions(conn):
             # Credit received minus debit paid to close, per contract, x100.
             pnl = round((credit - debit) * 100 * qty, 2)
         rows.append((
-            pid, e.get("underlying"), e.get("direction"), e.get("trade_date"),
+            pid, entry_seq, exit_seq,
+            e.get("underlying"), e.get("direction"), e.get("trade_date"),
             e.get("window"), e.get("expiry"), e.get("short_symbol"), e.get("long_symbol"),
             e.get("width"), qty, credit, e.get("max_loss_dollars"),
             entry_ts, e.get("order_id"),
@@ -306,10 +314,11 @@ def _build_positions(conn):
         ))
 
     conn.executemany(
-        "INSERT INTO positions (position_id, underlying, direction, trade_date, window,"
-        " expiry, short_symbol, long_symbol, width, qty, credit, max_loss_dollars,"
-        " entry_ts, entry_order_id, exit_ts, exit_reason, close_debit, exit_order_id,"
-        " realised_pnl_dollars, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO positions (position_id, entry_seq, exit_seq, underlying, direction,"
+        " trade_date, window, expiry, short_symbol, long_symbol, width, qty, credit,"
+        " max_loss_dollars, entry_ts, entry_order_id, exit_ts, exit_reason, close_debit,"
+        " exit_order_id, realised_pnl_dollars, status)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         rows,
     )
 
@@ -368,8 +377,8 @@ def open_positions(conn):
     payloads, so callers see exactly what the journal scan hands back."""
     rows = conn.execute(
         "SELECT e.payload FROM positions p"
-        " JOIN events e ON e.ts = p.entry_ts AND e.position_id = p.position_id"
-        " WHERE p.status = 'open' AND e.event = 'entry_filled'"
+        " JOIN events e ON e.seq = p.entry_seq"
+        " WHERE p.status = 'open'"
     ).fetchall()
     return [json.loads(r["payload"]) for r in rows]
 
@@ -448,9 +457,9 @@ def decision_log(conn, limit=200):
     rows = conn.execute(
         "SELECT seq, ts, session_date, event, level, position_id, underlying, reason, gate, payload"
         " FROM events WHERE event IN"
-        " ('entry_intent','entry_filled','entry_unfilled','exit_intent','exit_filled',"
-        "  'exit_unfilled','no_trade','naked_leg_detected','reconciliation_mismatch',"
-        "  'not_paper_abort','tick_exception')"
+        " ('proposal','entry_intent','entry_filled','entry_unfilled','exit_intent',"
+        "  'exit_filled','exit_unfilled','no_trade','naked_leg_detected',"
+        "  'reconciliation_mismatch','not_paper_abort','tick_exception')"
         " ORDER BY seq DESC LIMIT ?",
         (limit,),
     ).fetchall()

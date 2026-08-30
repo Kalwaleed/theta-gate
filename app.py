@@ -23,6 +23,7 @@ Palette and type match `docs/diagrams/*.html` so the deck, the diagrams
 and the demo read as one artifact.
 """
 
+import html
 import json
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,26 @@ LOSS = "#B3261E"
 # ---------------------------------------------------------------------------
 # Pure helpers -- no Streamlit, no I/O. test_app.py covers these.
 # ---------------------------------------------------------------------------
+
+def esc(value):
+    """HTML-escape anything journal-derived before it reaches the page.
+
+    app.py renders through `st.markdown(unsafe_allow_html=True)`, so any
+    string interpolated into that markup is live HTML. Most journal
+    strings are code-controlled gate messages, but two are not: the
+    proposer's `thesis` and `invalidation` are free text written by a
+    language model, and broker responses supply symbols and reasons. A
+    thesis containing a bare `<` renders broken; one containing a tag
+    executes, on a page that will be public and anonymous.
+
+    brain.py already screens proposals for prompt injection, which is the
+    right guard at that boundary and the wrong one at this boundary --
+    escaping here is what makes the rendering safe regardless of what
+    upstream let through. Quotes are escaped too, since several call
+    sites interpolate into `title="..."`.
+    """
+    return html.escape("" if value is None else str(value), quote=True)
+
 
 def money(value, signed=False):
     """`-$1,234.50`, not `$-1234.5`. The minus belongs outside the unit."""
@@ -280,7 +301,7 @@ def render_chart(points):
     dot_svg = "".join(
         f'<circle class="tg-dot-m" cx="{d["x"]:.2f}" cy="{d["y"]:.2f}" r="3.6"'
         f' style="animation-delay:{1.25 + i * 0.11:.2f}s"><title>'
-        f'{short_ts(d["point"]["ts"]) if d["point"]["ts"] else "session start"} -- '
+        f'{esc(short_ts(d["point"]["ts"]) if d["point"]["ts"] else "session start")} -- '
         f'{money(d["point"]["equity"])}</title></circle>'
         for i, d in enumerate(dots)
     )
@@ -310,7 +331,7 @@ def render_bars(rows, accent_gates=True):
         detail = r["reason"] if is_gate else ""
         out.append(f"""
 <div class="tg-bar-row">
-  <div class="tg-bar-k {'gate' if is_gate and accent_gates else ''}" title="{detail or label}">{label}</div>
+  <div class="tg-bar-k {'gate' if is_gate and accent_gates else ''}" title="{esc(detail or label)}">{esc(label)}</div>
   <div class="tg-bar-track"><div class="tg-bar-fill {'' if is_gate else 'soft'}"
        style="width:{r['width']}%; animation-delay:{0.15 + i * 0.07:.2f}s"></div></div>
   <div class="tg-bar-n">{r['n']}</div>
@@ -328,6 +349,48 @@ def render_rows(headers, rows):
         for i, row in enumerate(rows)
     )
     return f'<table class="tg-tbl tg-rise"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+
+
+def decision_detail(event, reason, payload):
+    """The one human-readable line for a journal event.
+
+    `proposal` is the only place the model's own words appear anywhere in
+    this system, so it gets the thesis. loop.py nests it under a
+    `proposal` key (it journals `dataclasses.asdict(proposal)`), not at
+    the top level -- reading `payload["thesis"]` directly, as an earlier
+    version did, silently found nothing and left the column blank on
+    exactly the rows where the AI is visible.
+
+    A failed proposal has `proposal: null`, which is a real outcome worth
+    showing rather than an empty cell: it means the model returned
+    something malformed and the loop declined to trade on it.
+    """
+    if event == "proposal":
+        p = payload.get("proposal")
+        if not p:
+            return "model returned nothing usable — no trade"
+        thesis = p.get("thesis") or ""
+        conf = p.get("confidence")
+        head = f'{p.get("underlying", "?")} {p.get("direction", "?")}'
+        if isinstance(conf, (int, float)):
+            head += f' ({conf:.0%} confidence)'
+        return f"{head} — {thesis}" if thesis else head
+    return reason or payload.get("note") or ""
+
+
+def decision_row(event_row, payload, tag_cls):
+    """Build one escaped decision-log row. Every interpolated value here
+    is journal-derived and therefore untrusted at render time."""
+    detail = decision_detail(event_row["event"], event_row["reason"], payload)
+    clipped = detail[:88] + ("..." if len(detail) > 88 else "")
+    price = payload.get("credit", payload.get("close_debit"))
+    return [
+        f'<span class="tg-sym">{esc(short_ts(event_row["ts"]))}</span>',
+        f'<span class="tg-tag-s {tag_cls}">{esc(event_row["event"].replace("_", " "))}</span>',
+        esc(event_row["underlying"] or "--"),
+        f'<span title="{esc(detail)}">{esc(clipped)}</span>',
+        f'<span class="tg-num">{money(price) if isinstance(price, (int, float)) else ""}</span>',
+    ]
 
 
 def section(title, subtitle=""):
@@ -450,10 +513,10 @@ def main():
             cls = "tg-win" if (pnl or 0) > 0 else ("tg-loss" if (pnl or 0) < 0 else "")
             state = ('<span class="tg-tag-s acc">open</span>' if p["status"] == "open"
                      else f'<span class="tg-tag-s">'
-                          f'{(p["exit_reason"] or "closed").replace("_", " ")}</span>')
+                          f'{esc((p["exit_reason"] or "closed").replace("_", " "))}</span>')
             rows.append([
-                f'<b>{p["underlying"]}</b><div class="tg-sym">{p["direction"] or ""}</div>',
-                f'{short_ts(p["entry_ts"])}<div class="tg-sym">exp {p["expiry"] or "--"}</div>',
+                f'<b>{esc(p["underlying"])}</b><div class="tg-sym">{esc(p["direction"] or "")}</div>',
+                f'{esc(short_ts(p["entry_ts"]))}<div class="tg-sym">exp {esc(p["expiry"] or "--")}</div>',
                 f'<span class="tg-num">{money(p["credit"])}</span>',
                 f'<span class="tg-num">{money(p["close_debit"])}</span>',
                 f'<span class="tg-num">{money(p["max_loss_dollars"])}</span>',
@@ -490,15 +553,7 @@ def main():
             payload = e["payload"]
             tag_cls = "bad" if e["level"] in ("critical", "warning") else (
                 "acc" if e["event"].endswith("_filled") else "")
-            detail = e["reason"] or payload.get("note") or payload.get("thesis") or ""
-            price = payload.get("credit", payload.get("close_debit"))
-            rows.append([
-                f'<span class="tg-sym">{short_ts(e["ts"])}</span>',
-                f'<span class="tg-tag-s {tag_cls}">{e["event"].replace("_", " ")}</span>',
-                e["underlying"] or "--",
-                f'<span title="{detail}">{detail[:88]}{"..." if len(detail) > 88 else ""}</span>',
-                f'<span class="tg-num">{money(price) if price is not None else ""}</span>',
-            ])
+            rows.append(decision_row(e, payload, tag_cls))
         st.markdown(render_rows(["When", "Event", "Symbol", "Detail", "Price"], rows),
                     unsafe_allow_html=True)
     else:

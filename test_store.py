@@ -435,3 +435,44 @@ def test_cli_rebuild_against_the_real_journal(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "chain: intact" in out
     assert json.loads(out.split("\n", 1)[1])["chain_intact"] is True
+
+
+def test_open_positions_survives_a_same_timestamp_replay(journal, db):
+    """A replay after an adopted order can journal the same position_id
+    twice with an identical ts. positions is keyed by position_id so it
+    held one row, but open_positions() joined back to events on ts and
+    matched both -- returning two open positions where loop.py returns
+    one. That is a parity break in the direction that matters: the
+    dashboard would show a phantom position, and any future caller that
+    trusted this over loop.py would double-count open risk.
+
+    The join is on events.seq now, which is unique by construction.
+    """
+    rec = entry("tg-e-20260831-1030-spy", "SPY", "2026-08-31T10:31:00-04:00")
+    write(journal, rec, rec)
+
+    conn = store.rebuild(db, str(journal))
+    expected = loop._open_positions(loop._read_journal())
+
+    assert len(expected) == 1
+    assert store.open_positions(conn) == expected
+
+
+def test_proposal_events_reach_the_decision_log(journal, db):
+    """brain.py's thesis is the only human-readable trace of the model's
+    contribution, and loop.py journals it as a `proposal` event. It was
+    filtered out of the decision log, so the dashboard showed an empty
+    Detail column on exactly the rows where the AI is visible."""
+    write(journal,
+          {"ts": "2026-08-31T10:30:00-04:00", "event": "proposal", "model": "claude-opus-5",
+           "proposal": {"underlying": "SPY", "direction": "bullish", "confidence": 0.6,
+                        "thesis": "contango holds and IV sits above realised",
+                        "invalidation": "VIX9D crosses VIX3M"}},
+          entry("tg-e-20260831-1030-spy", "SPY", "2026-08-31T10:31:00-04:00"))
+
+    conn = store.rebuild(db, str(journal))
+    events = [e["event"] for e in store.decision_log(conn)]
+    assert "proposal" in events
+
+    row = next(e for e in store.decision_log(conn) if e["event"] == "proposal")
+    assert row["payload"]["proposal"]["thesis"].startswith("contango")
