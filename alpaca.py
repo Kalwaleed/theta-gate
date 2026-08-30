@@ -1,6 +1,7 @@
 """Thin subprocess wrapper over the Alpaca CLI. The only place this codebase
 talks to a broker. Every public function shells out to `alpaca` and parses
-its JSON stdout — no alpaca-py, no direct HTTP.
+its JSON (stdout on success, stderr on an API error — see _run) — no
+alpaca-py, no direct HTTP.
 
 Paper is asserted at import and re-checked before every order submission,
 per Alpaca's own paper-trading skill: "verify the environment before every
@@ -20,6 +21,18 @@ class NotPaperError(RuntimeError):
     """Raised whenever paper mode cannot be proven. Fails closed."""
 
 
+class AlpacaCLIError(RuntimeError):
+    """The CLI reported an API error: a non-zero exit, or a body carrying
+    an "error" key. .payload is the parsed body and .returncode the exit
+    code, so a caller that opted in with allow_error can classify it (a
+    404 is a lookup miss, a 422 is a rejection) instead of crashing."""
+
+    def __init__(self, args, returncode, payload):
+        super().__init__(f"alpaca {' '.join(args)} failed (rc={returncode}): {json.dumps(payload, default=str)[:500]}")
+        self.payload = payload
+        self.returncode = returncode
+
+
 def _profile_env(profile):
     """Verified live 29 Aug 2026: `alpaca doctor --profile X` silently
     ignores the --profile flag and always reports on whichever profile is
@@ -33,16 +46,44 @@ def _profile_env(profile):
     return {**os.environ, "ALPACA_PROFILE": profile} if profile else dict(os.environ)
 
 
-def _run(*args, profile=None):
+def _run(*args, profile=None, allow_error=False):
+    """Verified live 30 Aug 2026 (CLI 0.0.13, throwaway paper account):
+    success is JSON on stdout, rc 0. An API error is an EMPTY stdout, rc 1,
+    and the error JSON on STDERR -- a get-by-client-id miss is {"code":
+    40410000, "error": "order not found for <id>", "status": 404, ...}, a
+    duplicate client_order_id on submit is {"code": 40010001, "error":
+    "client_order_id must be unique", "status": 422, ...}. The old
+    stdout-only parse turned every one of those into RuntimeError
+    ('returned non-JSON: ') -- the first order lookup of a tick crashed it.
+    `order cancel` answers `{}` (or nothing) with rc 0.
+
+    stderr also carries the CLI's hints and version nags, so it is sliced
+    from its first "{" before parsing -- a nag ahead of the JSON must not
+    turn an API error back into non-JSON.
+
+    allow_error=False (the default): rc != 0, or a body with an "error"
+    key, raises AlpacaCLIError so an unhandled API error surfaces as a
+    tick_exception rather than a silently wrong value. allow_error=True
+    returns the error body to the three callers that classify it
+    themselves: get_order_by_client_id, submit_mleg, cancel_order."""
     result = subprocess.run(
         ["alpaca", *args], capture_output=True, text=True, timeout=30,
         env=_profile_env(profile),
     )
+    raw = result.stdout.strip()
+    if not raw:
+        raw = result.stderr[result.stderr.find("{"):].strip() if "{" in result.stderr else ""
+    if not raw and result.returncode == 0:
+        return {}
     try:
-        # the CLI prints JSON to stdout on both success and error
-        return json.loads(result.stdout)
+        payload = json.loads(raw)
     except json.JSONDecodeError:
-        raise RuntimeError(f"alpaca {' '.join(args)} returned non-JSON: {result.stdout[:500]}")
+        raise RuntimeError(f"alpaca {' '.join(args)} returned non-JSON (rc={result.returncode}): {raw[:500]}")
+    if result.returncode != 0 or (isinstance(payload, dict) and "error" in payload):
+        if allow_error:
+            return payload
+        raise AlpacaCLIError(args, result.returncode, payload)
+    return payload
 
 
 def assert_paper(profile="submission"):
@@ -194,11 +235,22 @@ def latest_quote(symbol, profile="submission"):
 def get_order_by_client_id(client_order_id, profile="submission"):
     """Ambiguity resolves by lookup, never by retry (Alpaca CLI:431-437,
     PT:384). A hit means resubmitting would duplicate; only a confirmed
-    miss justifies a new submission."""
+    miss justifies a new submission.
+
+    Verified live 30 Aug 2026 (CLI 0.0.13): a miss is a 404 body on stderr
+    ({"code": 40410000, "error": "order not found for <id>", "status":
+    404}) -- the ONLY error this maps to None. Anything else (401, 5xx, a
+    rate limit) raises AlpacaCLIError: an unproven miss must never read as
+    "safe to submit". A hit keeps coming back after the order is canceled
+    (status "canceled", filled_qty "0"), so whether a hit is adoptable is
+    the caller's call -- see loop._lookup_or_submit."""
     assert_paper(profile)
-    result = _run("order", "get-by-client-id", "--client-order-id", client_order_id, profile=profile)
-    if isinstance(result, dict) and result.get("code") == 0 and "error" in result:
-        return None
+    args = ("order", "get-by-client-id", "--client-order-id", client_order_id)
+    result = _run(*args, profile=profile, allow_error=True)
+    if isinstance(result, dict) and "error" in result:
+        if result.get("status") == 404:
+            return None
+        raise AlpacaCLIError(args, 1, result)  # the CLI exits 1 on every API error (verified 30 Aug 2026)
     return result
 
 
@@ -223,6 +275,10 @@ def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", 
     duplicate id with 422 'client_order_id must be unique' rather than
     creating a second order, so the id must be the SAME id on retry, never
     a fresh one.
+
+    A rejection (that 422, or any other API error -- verified 30 Aug 2026
+    it arrives on stderr with no "id") is RETURNED, not raised: the caller
+    journals the body as submit_failed and ends the attempt.
     """
     assert_paper(profile)
     if len(legs) != 2:
@@ -240,7 +296,7 @@ def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", 
     ]
     if dry_run:
         args.append("--dry-run")
-    return _run(*args, profile=profile)
+    return _run(*args, profile=profile, allow_error=True)
 
 
 def list_orders(status="open", profile="submission"):
@@ -271,6 +327,13 @@ def poll_until_filled(order_id, max_attempts=60, profile="submission"):
 
 def cancel_order(order_id, profile="submission"):
     """Cancels ONE order by id. Never call `order cancel-all` — see
-    governance.json operational.no_bulk_operations."""
+    governance.json operational.no_bulk_operations.
+
+    Verified live 30 Aug 2026 (CLI 0.0.13): a cancel answers `{}` rc 0,
+    and so does cancelling an already-canceled order (idempotent). A
+    cancel racing a fill is answered 422 (not cancelable); that body is
+    returned rather than raised because loop._cancel_and_confirm polls the
+    order right after to learn what actually happened (filled vs canceled)
+    — the poll, not this response, is the source of truth."""
     assert_paper(profile)
-    return _run("order", "cancel", "--order-id", order_id, profile=profile)
+    return _run("order", "cancel", "--order-id", order_id, profile=profile, allow_error=True)

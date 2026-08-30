@@ -4,6 +4,7 @@ live on 26 Aug 2026, the same chain that produced the real fill proving the
 mleg body shape. See docs in the plan for the probe.
 """
 
+import subprocess
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -609,3 +610,75 @@ def test_build_underlying_state_passes_strike_window_around_spot():
     assert kwargs["expiration_date_gte"] == "2026-09-06"
     assert kwargs["expiration_date_lte"] == "2026-09-09"
     assert kwargs["option_type"] == "put"
+
+
+# ---------------------------------------------------------------------------
+# alpaca.py -- the CLI's real error contract (findings F2/F19/F20). Verified
+# live 30 Aug 2026 (CLI 0.0.13): an API error is an EMPTY stdout, rc 1, and
+# the error JSON on STDERR; the old stdout-only parse raised 'non-JSON' on
+# every order-lookup miss, so no order could ever be placed.
+# ---------------------------------------------------------------------------
+
+NOT_FOUND_404 = ('{"code": 40410000, "error": "order not found for tg-e-x", "hint": "", "method": "GET", '
+                 '"path": "/v2/orders:by_client_order_id", "request_id": "r1", "status": 404}')
+DUPLICATE_422 = ('{"code": 40010001, "error": "client_order_id must be unique", "hint": "Validation error", '
+                 '"method": "POST", "path": "/v2/orders", "request_id": "r2", "status": 422}')
+
+
+def _cli(returncode, stdout, stderr=""):
+    """Stands in for alpaca.subprocess.run with the real CLI's contract."""
+    return lambda cmd, **kw: subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+
+def _no_paper():
+    return patch.object(alpaca, "assert_paper", lambda profile="submission": None)
+
+
+def test_run_reads_error_json_from_stderr_and_raises():
+    with patch("alpaca.subprocess.run", _cli(1, "", NOT_FOUND_404)):
+        with pytest.raises(alpaca.AlpacaCLIError, match="rc=1") as excinfo:
+            alpaca._run("order", "get")
+        assert excinfo.value.payload["status"] == 404 and excinfo.value.returncode == 1
+        assert alpaca._run("order", "get", allow_error=True)["status"] == 404
+
+
+def test_run_slices_a_stderr_nag_off_the_error_json():
+    nag = "warning: alpaca 0.0.14 is available\n" + NOT_FOUND_404
+    with patch("alpaca.subprocess.run", _cli(1, "", nag)):
+        assert alpaca._run("order", "get", allow_error=True)["code"] == 40410000
+
+
+def test_run_empty_stdout_rc0_is_empty_dict():
+    with patch("alpaca.subprocess.run", _cli(0, "", "")):
+        assert alpaca._run("order", "cancel") == {}
+
+
+def test_run_non_json_raises_runtime_error_with_rc():
+    with patch("alpaca.subprocess.run", _cli(1, "boom", "")):
+        with pytest.raises(RuntimeError, match="rc=1") as excinfo:
+            alpaca._run("clock")
+    assert not isinstance(excinfo.value, alpaca.AlpacaCLIError)
+
+
+def test_get_order_by_client_id_404_is_a_miss():
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", NOT_FOUND_404)):
+        assert alpaca.get_order_by_client_id("tg-e-x") is None
+
+
+def test_get_order_by_client_id_non_404_error_raises():
+    unauthorized = NOT_FOUND_404.replace('"status": 404', '"status": 401')
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", unauthorized)):
+        with pytest.raises(alpaca.AlpacaCLIError):
+            alpaca.get_order_by_client_id("tg-e-x")
+
+
+def test_submit_mleg_returns_rejection_body():
+    legs = [{"symbol": "S"}, {"symbol": "L"}]
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(1, "", DUPLICATE_422)):
+        response = alpaca.submit_mleg(legs, limit_price="-0.60", client_order_id="tg-e-x")
+    assert response["error"] == "client_order_id must be unique" and "id" not in response
+
+
+def test_cancel_order_returns_empty_dict_on_204():
+    with _no_paper(), patch("alpaca.subprocess.run", _cli(0, "{}", "")):
+        assert alpaca.cancel_order("1ee5812d") == {}

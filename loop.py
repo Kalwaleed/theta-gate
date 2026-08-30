@@ -70,6 +70,10 @@ ENTRY_CONCESSION_FLOOR_DOLLARS = 0.50   # canonical Sec 7.3's credit floor -- ne
 EXIT_CONCESSION_DOLLARS = 0.05          # mirrors the entry ladder's concession size; not governance-specified
 ENTRY_WINDOW_MINUTES = 15               # canonical Sec 4.3; governance.json's windows_et lists only start times
 LOCK_STALE_SECONDS = 600                # a same-machine lock older than this is presumed abandoned
+TERMINAL_UNFILLED_STATUSES = ("canceled", "expired", "rejected", "done_for_day", "replaced")
+# ponytail: 6 ids per (window, stage) -- one base + r2..r6 -- covers the ~6 ticks a
+# window sees; a 7th stale id gives up loudly rather than walk forever.
+MAX_ORDER_ID_ATTEMPTS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -282,20 +286,58 @@ def _map_account_state(account):
 # ---------------------------------------------------------------------------
 
 def _lookup_or_submit(client_order_id, legs, limit_price, qty, profile, dry_run):
-    """ALWAYS look up by client_order_id before ever submitting. A hit is
-    adopted, never resubmitted. Verified live 29 Aug 2026: Alpaca rejects a
-    resubmitted duplicate id with HTTP 422, never a second order."""
-    existing = alpaca.get_order_by_client_id(client_order_id, profile=profile)
-    if existing is not None:
-        return existing, "adopted"
-    response = alpaca.submit_mleg(
-        legs, limit_price=limit_price, client_order_id=client_order_id,
-        qty=qty, dry_run=dry_run, profile=profile,
-    )
-    # dry_run's echo has no "id"/"status" -- that absence is the only signal
-    # distinguishing an echo from a real submitted order (verified 29 Aug 2026).
-    action = "submitted" if response.get("id") else "dry_run"
-    return response, action
+    """ALWAYS look up by client_order_id before ever submitting. A LIVE hit
+    is adopted, never resubmitted. Verified live 29 Aug 2026: Alpaca
+    rejects a resubmitted duplicate id with HTTP 422, never a second order.
+
+    Verified live 30 Aug 2026 (CLI 0.0.13): get-by-client-id keeps
+    returning an order forever after it is canceled (status "canceled",
+    filled_qty "0"). Adopting that hit gave a window exactly one attempt --
+    after tick 10:30's s0/s1 were canceled, every later tick in the window
+    re-adopted the dead orders and gave up. So a terminal, UNFILLED hit is
+    journaled (stale_order_skipped) and the id walks on: <base>, <base>r2,
+    ... <base>r6. A partially filled terminal order IS adopted -- something
+    real happened under that id and the caller must see it. The walk is
+    deterministic, so a crash-retry re-walks the same sequence and lands on
+    the same live order (still idempotent).
+
+    The entry_intent/exit_intent event journaled BEFORE this call names the
+    BASE id, deliberately: the sequence is a pure function of the base id,
+    so base id + the *_submitted/*_adopted event's resolved id is the
+    durable record. A second intent event per rN would only double the
+    journal for no extra recoverability.
+
+    Returns (order, action, resolved_client_order_id), action in
+    adopted | submitted | dry_run | failed. The CLI puts a rejection body
+    on stderr with no "id" (verified 30 Aug 2026) -- it used to be
+    classified as a dry_run echo and never surfaced. Now it is journaled
+    as submit_failed (critical) and returned as "failed": the caller ends
+    this attempt and the next tick retries the same id sequence."""
+    for n in range(1, MAX_ORDER_ID_ATTEMPTS + 1):
+        cid = client_order_id if n == 1 else f"{client_order_id}r{n}"
+        existing = alpaca.get_order_by_client_id(cid, profile=profile)
+        if existing is not None:
+            if existing.get("status") in TERMINAL_UNFILLED_STATUSES and float(existing.get("filled_qty") or 0) == 0:
+                _append_journal("stale_order_skipped", client_order_id=cid, order_id=existing.get("id"),
+                                 status=existing.get("status"))
+                continue
+            return existing, "adopted", cid
+        response = alpaca.submit_mleg(
+            legs, limit_price=limit_price, client_order_id=cid,
+            qty=qty, dry_run=dry_run, profile=profile,
+        )
+        # dry_run's echo has no "id"/"status" (verified 29 Aug 2026); a
+        # rejection has no "id" either, but it does carry "error".
+        if dry_run and "error" not in response:
+            return response, "dry_run", cid
+        if response.get("id"):
+            return response, "submitted", cid
+        _append_journal("submit_failed", level="critical", client_order_id=cid,
+                         response=json.dumps(response, default=str)[:500])
+        return response, "failed", cid
+    _append_journal("submit_failed", level="critical", client_order_id=client_order_id,
+                     response="every id attempt resolves to a stale order")
+    return {}, "failed", client_order_id
 
 
 def _wait_for_terminal(order, wait_seconds, profile, gov):
@@ -432,6 +474,14 @@ def _current_force_rung(now, gov):
     return current
 
 
+def _force_rung_tag(now, at_et):
+    """Date-stamped, e.g. force09031430. The client_order_id's date slot is
+    the position's trade_date, not today's, so without the date here a
+    position still open on Friday computed exactly Thursday's force ids
+    and adopted Thursday's stale canceled orders."""
+    return f"force{now.astimezone(ET):%m%d}{at_et.replace(':', '')}"
+
+
 # ---------------------------------------------------------------------------
 # Exit handling (step 6)
 # ---------------------------------------------------------------------------
@@ -491,10 +541,12 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
     body0 = spread.closing_mleg_body(plan, qty, mid_debit)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid0, reason=reason,
                      rung=rung, stage=stage0, limit_price=mid_debit, qty=qty)
-    order, action = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
+    order, action, cid0 = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{action}", position_id=position_id, client_order_id=cid0, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True}
+    if action == "failed":
+        return {"filled": False, "failed": True}
 
     order = _wait_for_terminal(order, wait_seconds, profile, gov)
     if order.get("status") == "filled":
@@ -517,10 +569,12 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
     body1 = spread.closing_mleg_body(plan, qty, stage1_price)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid1, reason=reason,
                      rung=rung, stage=stage1, limit_price=stage1_price, qty=qty)
-    order, action = _lookup_or_submit(cid1, body1["legs"], body1["limit_price"], qty, profile, dry_run)
+    order, action, cid1 = _lookup_or_submit(cid1, body1["legs"], body1["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{action}", position_id=position_id, client_order_id=cid1, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True}
+    if action == "failed":
+        return {"filled": False, "failed": True}
 
     order = _wait_for_terminal(order, wait_seconds, profile, gov)
     if order.get("status") == "filled":
@@ -552,7 +606,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
 
     current_rung = _current_force_rung(now, gov)
     action = current_rung["action"]
-    rung_tag = "force" + current_rung["at_et"].replace(":", "")
+    rung_tag = _force_rung_tag(now, current_rung["at_et"])
 
     if action == "reconcile_and_alert":
         _append_journal("force_close_unresolved", level="critical", position_id=position_id,
@@ -598,10 +652,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
     body = spread.closing_mleg_body(plan, qty, price)
     _append_journal("exit_intent", position_id=position_id, client_order_id=cid, reason="force_close",
                      rung=rung_tag, action=action, stage="s0", limit_price=price, qty=qty)
-    order, act = _lookup_or_submit(cid, body["legs"], body["limit_price"], qty, profile, dry_run)
+    order, act, cid = _lookup_or_submit(cid, body["legs"], body["limit_price"], qty, profile, dry_run)
     _append_journal(f"exit_{act}", position_id=position_id, client_order_id=cid, order_id=order.get("id"))
     if act == "dry_run":
         return {"filled": False, "dry_run": True, "rung": rung_tag}
+    if act == "failed":
+        return {"filled": False, "failed": True, "rung": rung_tag}
 
     if order.get("status") == "filled":
         _journal_exit_fill(order, position_id, underlying, "force_close", qty, price,
@@ -695,10 +751,12 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
                      expiry=candidate.expiry, short_symbol=candidate.short.symbol,
                      long_symbol=candidate.long.symbol, width=candidate.width, qty=qty,
                      limit_price=body0["limit_price"])
-    order, action = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
+    order, action, cid0 = _lookup_or_submit(cid0, body0["legs"], body0["limit_price"], qty, profile, dry_run)
     _append_journal(f"entry_{action}", position_id=position_id, client_order_id=cid0, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True, "stage": "s0"}
+    if action == "failed":
+        return {"filled": False, "failed": True, "stage": "s0"}
 
     order = _wait_for_terminal(order, ENTRY_FIRST_LIMIT_WAIT_SECONDS, profile, gov)
     if order.get("status") == "filled":
@@ -729,10 +787,12 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
                      expiry=candidate.expiry, short_symbol=candidate.short.symbol,
                      long_symbol=candidate.long.symbol, width=candidate.width, qty=qty,
                      limit_price=limit_price1)
-    order, action = _lookup_or_submit(cid1, body0["legs"], limit_price1, qty, profile, dry_run)
+    order, action, cid1 = _lookup_or_submit(cid1, body0["legs"], limit_price1, qty, profile, dry_run)
     _append_journal(f"entry_{action}", position_id=position_id, client_order_id=cid1, order_id=order.get("id"))
     if action == "dry_run":
         return {"filled": False, "dry_run": True, "stage": "s1"}
+    if action == "failed":
+        return {"filled": False, "failed": True, "stage": "s1"}
 
     remaining = max(ENTRY_LADDER_TOTAL_BUDGET_SECONDS - ENTRY_FIRST_LIMIT_WAIT_SECONDS, 1)
     order = _wait_for_terminal(order, remaining, profile, gov)
