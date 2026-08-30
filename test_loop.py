@@ -8,10 +8,15 @@ lazy self-check owes; see the build report.
 """
 
 import contextlib
+import json
+import subprocess
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
+import pytest
+
+import alpaca
 import loop
 import spread
 
@@ -362,6 +367,118 @@ def test_attempt_exit_cancels_a_live_sibling_before_the_walk(tmp_path, monkeypat
     assert broker_calls[0] == ("cancel", "o-x-s1")
     assert [c for c in broker_calls if c[0] == "submit"] == [("submit", base0 + "r2"), ("submit", base1 + "r2")]
     assert ("cancel", "o-force") not in broker_calls and ("cancel", "o-e") not in broker_calls
+
+
+def test_attempt_force_close_cancels_a_live_window_ladder_exit_first(tmp_path, monkeypatch):
+    # force_close is sticky by clock (risk.exit_signal), so a stop/tp exit
+    # order left live by a crash in the 14:25 tick is never revisited by
+    # _attempt_exit -- only the force ladder can clear it. Its prefix used
+    # to be `tg-x-<date>-force`, which walked straight past it.
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    with open(loop.GOVERNANCE_PATH, encoding="utf-8") as f:
+        gov = {**GOV, "exit": json.load(f)["exit"]}
+    own = "tg-x-20260831-force09031430-spy-s0"
+    open_orders = [{"id": "o-x-s1", "client_order_id": "tg-x-20260831-1030-spy-s1"},          # crashed window ladder
+                   {"id": "o-own", "client_order_id": own},                                   # this rung's own -- adopted
+                   {"id": "o-qqq", "client_order_id": "tg-x-20260831-1030-qqq-s1"}]          # other underlying -- untouched
+    broker_calls = []
+    with _recording_broker({own: {"id": "o-own", "status": "accepted", "filled_qty": "0"}}, broker_calls):
+        result = loop._attempt_force_close(ENTRY_REC, SHORT_C, LONG_C, gov, datetime(2026, 9, 3, 14, 31, tzinfo=ET),
+                                           "submission", False, open_orders)
+    assert result == {"filled": False, "rung": "force09031430", "order_id": "o-own"}
+    assert broker_calls == [("cancel", "o-x-s1")]
+
+
+NOT_FOUND_404 = lambda cid: json.dumps({"code": 40410000, "error": f"order not found for {cid}", "status": 404})
+SERVER_500 = json.dumps({"code": 50010000, "error": "internal server error", "status": 500})
+
+
+class _FakeCLI:
+    """alpaca.subprocess.run with the verified 30 Aug 2026 order contract
+    (stdout JSON rc 0; a 404/500 body on stderr, empty stdout, rc 1) and a
+    persistent order book, so a second "tick" sees what the first left
+    behind. Records which orders were still live at every submit."""
+
+    def __init__(self):
+        self.orders, self.live_at_submit, self.n, self.crash_s1_polls = {}, [], 0, False
+
+    def _by_id(self, oid):
+        return next((o for o in self.orders.values() if o["id"] == oid), None)
+
+    def live(self):
+        return sorted(c for c, o in self.orders.items() if o["status"] == "accepted")
+
+    def __call__(self, cmd, **kw):
+        a = cmd[1:]
+        ok = lambda body: subprocess.CompletedProcess(cmd, 0, json.dumps(body), "")
+        err = lambda body: subprocess.CompletedProcess(cmd, 1, "", body)
+        if a[:2] == ["order", "get-by-client-id"]:
+            cid = a[a.index("--client-order-id") + 1]
+            return ok(self.orders[cid]) if cid in self.orders else err(NOT_FOUND_404(cid))
+        if a[:2] == ["order", "submit"]:
+            cid = a[a.index("--client-order-id") + 1]
+            self.live_at_submit.append((cid, self.live()))
+            self.n += 1
+            self.orders[cid] = {"id": f"oid-{self.n}", "client_order_id": cid, "status": "accepted", "filled_qty": "0"}
+            return ok(self.orders[cid])
+        if a[:2] == ["order", "get"]:
+            o = self._by_id(a[a.index("--order-id") + 1])
+            if self.crash_s1_polls and o["client_order_id"].endswith("-s1"):
+                return err(SERVER_500)  # a transient 500 during s1's wait -> AlpacaCLIError -> tick_exception
+            return ok(o)
+        if a[:2] == ["order", "cancel"]:
+            self._by_id(a[a.index("--order-id") + 1])["status"] = "canceled"
+            return ok({})
+        if a[:2] == ["order", "list"]:
+            return ok([o for o in self.orders.values() if o["status"] == "accepted"])
+        if a[:2] == ["position", "list"]:
+            return ok([])
+        raise AssertionError(f"unexpected {cmd}")
+
+
+@contextlib.contextmanager
+def _fake_cli(monkeypatch, tmp_path):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    cli = _FakeCLI()
+    with patch.object(alpaca, "assert_paper", lambda profile="submission": None), \
+         patch("alpaca.subprocess.run", cli), patch("alpaca.time.sleep", lambda s: None):
+        yield cli
+
+
+def test_attempt_entry_crash_mid_s1_then_next_tick_never_submits_beside_a_live_order(tmp_path, monkeypatch):
+    # The review's repro, end to end through the real alpaca._run parse and
+    # the real tick-start alpaca.list_orders fetch: tick 1 dies in s1's
+    # wait and leaves s1 live; tick 2 must clear it before s0r2 goes out.
+    with _fake_cli(monkeypatch, tmp_path) as cli:
+        cli.crash_s1_polls = True
+        with pytest.raises(alpaca.AlpacaCLIError):
+            loop._attempt_entry(PLAN, 1, "1030", "20260831", NOW, GOV, "submission", False, alpaca.list_orders(status="open"))
+        assert cli.live() == ["tg-e-20260831-1030-spy-s1"]
+        cli.crash_s1_polls = False
+        next_tick = datetime(2026, 8, 31, 10, 36, tzinfo=ET)
+        result = loop._attempt_entry(PLAN, 1, "1030", "20260831", next_tick, GOV, "submission", False,
+                                     alpaca.list_orders(status="open"))
+    assert result == {"filled": False, "stage": "s1"}
+    assert [cid for cid, _ in cli.live_at_submit] == ["tg-e-20260831-1030-spy-s0", "tg-e-20260831-1030-spy-s1",
+                                                       "tg-e-20260831-1030-spy-s0r2", "tg-e-20260831-1030-spy-s1r2"]
+    assert all(live == [] for _, live in cli.live_at_submit), cli.live_at_submit
+    assert cli.live() == []
+
+
+def test_attempt_exit_crash_mid_s1_then_next_tick_never_submits_beside_a_live_order(tmp_path, monkeypatch):
+    with _fake_cli(monkeypatch, tmp_path) as cli:
+        cli.crash_s1_polls = True
+        with pytest.raises(alpaca.AlpacaCLIError):
+            loop._attempt_exit(ENTRY_REC, "stop_loss", SHORT_C, LONG_C, GOV, NOW, "submission", False, [],
+                               alpaca.list_orders(status="open"))
+        assert cli.live() == ["tg-x-20260831-1030-spy-s1"]
+        cli.crash_s1_polls = False
+        result = loop._attempt_exit(ENTRY_REC, "stop_loss", SHORT_C, LONG_C, GOV, NOW, "submission", False,
+                                    loop._read_journal(), alpaca.list_orders(status="open"))
+    assert result == {"filled": False}
+    assert all(live == [] for _, live in cli.live_at_submit), cli.live_at_submit
+    assert cli.live() == []
 
 
 def test_run_tick_guarded_publishes_once_on_success():
