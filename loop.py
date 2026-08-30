@@ -613,8 +613,12 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
     """The full governance-driven ladder (governance.json fully specifies
     it). No in-tick wait: the ladder is time-spaced across ticks (30 min
     per rung, per governance.exit.force_close_ladder), so each tick just
-    submits/adopts whatever the CURRENT rung is; a stale earlier-rung order
-    still open gets canceled first."""
+    submits/adopts whatever the CURRENT rung is; any other exit order for
+    this position still open gets canceled first -- an earlier rung's, or
+    a window-ladder (stop/tp) order left live by a crash in the tick before
+    the first rung (the same two-live-closing-orders shape _attempt_exit
+    guards against; found in review 30 Aug 2026 when its prefix was
+    `tg-x-<date>-force` and skipped the window ladder's ids)."""
     position_id = entry_rec["position_id"]
     underlying = entry_rec["underlying"]
     qty = entry_rec["_close_qty"]
@@ -647,7 +651,7 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
         "market_mleg": min(round(natural_debit + 0.05, 2), entry_rec["width"] - 0.01),
     }[action]
 
-    stale_prefix = f"tg-x-{trade_date}-force"
+    stale_prefix = f"tg-x-{trade_date}-"  # every exit id for this position: force rungs AND the window ladder
     this_rung_prefix = f"tg-x-{trade_date}-{rung_tag}-{underlying.lower()}-"
     for o in open_orders:
         coid = str(o.get("client_order_id") or "")
