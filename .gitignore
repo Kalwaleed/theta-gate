@@ -34,3 +34,6 @@ data/*.db-wal
 data/*.db-shm
 
 .gstack/
+
+# memsearch plugin index and session notes -- local only, never published
+.memsearch/

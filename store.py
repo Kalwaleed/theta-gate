@@ -49,7 +49,9 @@ input; if they ever diverge, loop.py is right and this file has a bug.
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -217,13 +219,32 @@ def rebuild(db_path=DB_PATH, journal_path=JOURNAL_PATH):
     Rebuilding rather than incrementally appending is the whole safety
     argument -- there is no code path that can leave this database holding
     a fact the journal does not.
+
+    Build-then-rename, not build-in-place. The first version unlinked the
+    target and created the schema directly at `db_path`, which is fine for
+    the CLI and fatal for the dashboard: Streamlit serves concurrent
+    sessions on separate threads, so several cold loads land in here at
+    once and stamp on each other mid-DDL. Measured on the real code, 10 of
+    12 simultaneous cold loads failed -- `disk I/O error`, `attempt to
+    write a readonly database`, `table meta already exists`. On the public
+    demo URL that is a broken page in front of a judge, and
+    `showErrorDetails = "none"` means it would not even say why.
+
+    Each caller now builds a uniquely-named database of its own and
+    `os.replace`s it over the target, which is atomic on POSIX and on
+    Windows. Concurrent builders do identical work from the same journal,
+    so whichever lands last wins and every one of them is correct -- the
+    determinism this function already guaranteed is what makes the race
+    benign rather than merely unlikely.
     """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
+    # Unique per process AND per thread: Streamlit's concurrency is threads
+    # inside one process, so a pid-only suffix would still collide.
+    staging = path.with_name(f"{path.name}.building.{os.getpid()}.{threading.get_ident()}")
+    staging.unlink(missing_ok=True)
 
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(staging))
     conn.row_factory = sqlite3.Row
     conn.executescript(DDL)
 
@@ -270,6 +291,18 @@ def rebuild(db_path=DB_PATH, journal_path=JOURNAL_PATH):
     )
     _build_positions(conn)
     conn.commit()
+    conn.close()
+
+    try:
+        # Atomic on POSIX and Windows: readers either see the whole old
+        # database or the whole new one, never a half-built schema.
+        os.replace(staging, path)
+    except OSError:
+        staging.unlink(missing_ok=True)
+        raise
+
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -326,20 +359,30 @@ def _build_positions(conn):
 def connect(db_path=DB_PATH, journal_path=JOURNAL_PATH, rebuild_if_stale=True):
     """Open the read model, rebuilding when it is missing or behind the
     journal. Cheap enough to call on every dashboard page load: the
-    journal is a few hundred lines over the whole hackathon."""
+    journal is a few hundred lines over the whole hackathon.
+
+    Every read here is wrapped, because this is the dashboard's only entry
+    point and it runs on a public URL with `showErrorDetails = "none"` --
+    an escaping sqlite3 error is a blank page a judge cannot interpret and
+    we cannot diagnose. A reader can legitimately arrive mid-`os.replace`
+    and find a file that vanished or changed identity under it; the answer
+    is always the same, and always safe: rebuild from the journal, which
+    is the source of truth anyway.
+    """
     path = Path(db_path)
     if not path.exists():
         return rebuild(db_path, journal_path)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    if not rebuild_if_stale:
-        return conn
+
     try:
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        if not rebuild_if_stale:
+            return conn
         stored = conn.execute("SELECT value FROM meta WHERE key='event_count'").fetchone()
         version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    except sqlite3.DatabaseError:
-        conn.close()
+    except (sqlite3.Error, OSError):
         return rebuild(db_path, journal_path)
+
     live = len(read_journal(journal_path))
     if stored is None or version is None or int(stored[0]) != live or int(version[0]) != SCHEMA_VERSION:
         conn.close()
