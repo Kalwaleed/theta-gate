@@ -116,19 +116,31 @@ def positions(profile="submission"):
 
 
 def option_chain(underlying, option_type, expiration_date=None, expiration_date_gte=None,
-                  expiration_date_lte=None, strike_gte=None, strike_lte=None, profile="submission"):
+                  expiration_date_lte=None, strike_gte=None, strike_lte=None, limit=1000,
+                  profile="submission"):
     """Verified live 29 Aug 2026: --expiration-date-gte/-lte fetch every
     listed expiry in a range in one call. loop.py uses the range form to
     pull the whole 6-9 DTE window at once — spread.parse_chain now extracts
     each contract's own expiry from its OCC symbol, so candidates across
     multiple expiries can be ranked together (canonical plan Sec 6.2)
-    without a separate call per DTE."""
+    without a separate call per DTE.
+
+    Verified live 30 Aug 2026 (CLI 0.0.13): the old hardcoded --limit 100
+    returned 100 snapshots of ONE expiry (100 of SPY's 330 6-9 DTE puts)
+    with next_page_token set and ignored — the 0.16-0.25 delta band could
+    fall off the page, and an open position's leg outside it made every
+    exit skip as exit_quote_unavailable. --limit 1000 returns the whole
+    SPY window (330 snapshots, expiries 260908+260909, next_page_token "")
+    in one page in ~0.8 s; QQQ 334. Any further page is fetched with
+    --page-token and merged, so `snapshots` is always the complete chain
+    for the given filters. Returns {"snapshots", "next_page_token": None,
+    "pages"}."""
     assert_paper(profile)
     args = [
         "data", "option", "chain",
         "--underlying-symbol", underlying,
         "--type", option_type,
-        "--limit", "100",
+        "--limit", str(limit),
     ]
     if expiration_date is not None:
         args += ["--expiration-date", expiration_date]
@@ -140,7 +152,19 @@ def option_chain(underlying, option_type, expiration_date=None, expiration_date_
         args += ["--strike-price-gte", str(strike_gte)]
     if strike_lte is not None:
         args += ["--strike-price-lte", str(strike_lte)]
-    return _run(*args, profile=profile)
+
+    merged, token = {}, None
+    # ponytail: 20-page cap — a full SPY window is one page at limit 1000
+    for pages in range(1, 21):
+        page = _run(*args, *(["--page-token", token] if token else []), profile=profile)
+        if not isinstance(page, dict) or "snapshots" not in page:
+            # an error body must not become an empty chain (= "no candidates" / "leg not found")
+            raise RuntimeError(f"alpaca option chain page {pages} has no snapshots: {str(page)[:300]}")
+        merged.update(page["snapshots"] or {})
+        token = page.get("next_page_token")
+        if not token:
+            break
+    return {"snapshots": merged, "next_page_token": None, "pages": pages}
 
 
 def stock_bars(symbol, start, timeframe="1Day", limit=25, adjustment="all", profile="submission"):

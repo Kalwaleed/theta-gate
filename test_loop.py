@@ -165,3 +165,21 @@ def test_check_leg_symmetry_both_open_or_both_closed_is_fine(tmp_path, monkeypat
     with patch("loop.alpaca.positions", return_value=[{"symbol": "S"}, {"symbol": "L"}]):
         assert loop._check_leg_symmetry("S", "L", "submission", "p1", context="test") is True
     assert loop._check_halt()[0] is False
+
+
+def test_fresh_close_quotes_windows_the_chain_to_the_legs():
+    # Verified live 30 Aug 2026: an unwindowed --limit 100 page could omit
+    # a leg, and the resulting MarketDataError made the exit (Thursday's
+    # flatten included) silently skip as exit_quote_unavailable.
+    snapshots = {
+        "SPY260908P00700000": {"latestQuote": {"bp": 1.50, "ap": 1.55, "t": "2026-09-01T15:00:00Z"}, "greeks": {"delta": -0.2}},
+        "SPY260908P00695000": {"latestQuote": {"bp": 0.90, "ap": 0.95, "t": "2026-09-01T15:00:00Z"}, "greeks": {"delta": -0.13}},
+    }
+    chain_mock = MagicMock(return_value={"snapshots": snapshots})
+    with patch("loop.alpaca.option_chain", chain_mock):
+        short_c, long_c = loop._fresh_close_quotes("SPY", "2026-09-08", "SPY260908P00700000", "SPY260908P00695000", "submission")
+
+    kwargs = chain_mock.call_args.kwargs
+    assert kwargs["expiration_date"] == "2026-09-08"
+    assert kwargs["strike_gte"] == 694.5 and kwargs["strike_lte"] == 700.5
+    assert short_c.symbol == "SPY260908P00700000" and long_c.symbol == "SPY260908P00695000"
