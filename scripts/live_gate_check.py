@@ -48,7 +48,8 @@ def main():
     underlying_states = {}
     for u in gov["strategy"]["underlyings"]:
         try:
-            u_state = market.build_underlying_state(u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile="submission")
+            u_state = market.build_underlying_state(u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile="submission",
+                                                    rv_lookback_days=gov["vrp"]["realised_vol_lookback_days"])
         except market.MarketDataError as exc:
             print(f"{u}: MarketDataError: {exc}")
             continue

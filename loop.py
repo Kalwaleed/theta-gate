@@ -830,6 +830,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         try:
             underlying_states[u] = market.build_underlying_state(
                 u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile=profile,
+                rv_lookback_days=gov["vrp"]["realised_vol_lookback_days"],
             )
         except market.MarketDataError as exc:
             _append_journal("no_trade", reason="underlying_data_unavailable", underlying=u, detail=str(exc))
