@@ -22,8 +22,9 @@ Priority order every tick, each step protecting the one before it:
      broker's own closed orders
   10. the entry attempt: brain.propose -> risk gates -> the two-stage price
       ladder
-  11. journal tick_completed, then git add/commit/push the journal
-      (publication only, never load-bearing for trading logic)
+  11. journal tick_completed; then _run_tick_guarded git add/commit/pushes
+      the journal and HALT.json on EVERY path -- success, exception, or
+      not_paper_abort -- so the tick's own events survive the runner
 
 Durability without a database: Alpaca is authoritative for what is actually
 open (positions/orders, refetched every tick). A deterministic
@@ -946,7 +947,7 @@ def _git_publish(now):
     on an ephemeral CI runner -- an unpublished HALT.json is silently lost
     the moment that runner is destroyed, defeating every HALT trigger in
     this file exactly the way an unpublished journal entry defeats the
-    risk caps (see the publish_failed check in _run_tick_body). HALT.json
+    risk caps (see the publish_failed check in _run_tick_guarded). HALT.json
     is only ever git-added when it exists, and its content is stable
     (only _trigger_halt writes to it after the first tick), so this does
     not create a commit every tick -- only when a halt is newly set."""
@@ -996,13 +997,41 @@ def _run_tick_guarded(now, dry_run, profile):
     any unexpected failure below is caught, journaled (so
     gate_cumulative_drawdown's consecutive_exceptions count sees it on the
     next tick), and returned as ok=False. The CLI entrypoint decides the
-    process exit code from that field."""
+    process exit code from that field.
+
+    The git publish lives here, after the try/except, and not in the
+    body's happy path (where it sat until 30 Aug 2026): a tick that raised,
+    or aborted at not_paper_abort, journaled tick_exception / tick_completed
+    ok=False / a fresh HALT.json / an entry_submitted on the ephemeral
+    runner and returned without committing, so none of it reached the next
+    tick's checkout -- the consecutive-exception halt could never trip on
+    CI, and a crash after a submit left a live order no later tick knew
+    about. Every path publishes exactly once."""
     try:
-        return _run_tick_body(now, dry_run, profile)
+        summary = _run_tick_body(now, dry_run, profile)
     except Exception as exc:
         _append_journal("tick_exception", level="critical", error=f"{type(exc).__name__}: {exc}")
         _append_journal("tick_completed", ok=False, error=str(exc))
-        return {"ok": False, "now": now.isoformat(), "error": str(exc)}
+        summary = {"ok": False, "now": now.isoformat(), "error": str(exc)}
+
+    git_result = _git_publish(now)
+
+    # A commit that failed to push is not "transport, never load-bearing" --
+    # this tick wrote real state (an entry_filled/exit_filled/HALT-relevant
+    # event) that a future tick's fresh checkout will never see. That
+    # silently defeats every journal-derived risk cap (entries_today,
+    # open_positions, ...). Surface it as a tick failure: main() exits
+    # non-zero (a red GitHub Actions run a human notices) and, once this
+    # event DOES reach a future successful push, consecutive_exceptions
+    # sees it too.
+    publish_failed = bool(git_result.get("committed")) and not git_result.get("pushed")
+    if publish_failed:
+        _append_journal("journal_publish_failed", level="critical", git_result=git_result,
+                         note="journal committed locally but push failed -- this runner's state may "
+                              "never reach the next tick's fresh checkout")
+        summary["ok"] = False
+    summary["git"] = git_result
+    return summary
 
 
 def _run_tick_body(now, dry_run, profile):
@@ -1042,7 +1071,7 @@ def _run_tick_body(now, dry_run, profile):
 
     # The journal is only durable once git-published; on an ephemeral CI
     # runner, a tick whose push silently failed (see the git-publish check
-    # at the end of this function) leaves its entry_filled event invisible
+    # in _run_tick_guarded) leaves its entry_filled event invisible
     # to every future tick's fresh checkout. If the broker shows an open
     # option leg no currently-known position accounts for, that is exactly
     # what a lost entry_filled looks like -- HALT rather than silently
@@ -1104,31 +1133,16 @@ def _run_tick_body(now, dry_run, profile):
                 consecutive_exceptions, halt_active,
             )
 
-    # Step 11
+    # Step 11 -- the git publish is _run_tick_guarded's, so it also runs
+    # when this function raises or aborts at not_paper_abort.
     _append_journal(
         "tick_completed", ok=True, halt_active=halt_active, orphan_symbols=orphan_symbols,
         exits=len(exits_this_tick), entry_attempted=entry_result.get("attempted", False),
     )
-    git_result = _git_publish(now)
-
-    # A commit that failed to push is not "transport, never load-bearing" --
-    # this tick wrote real state (an entry_filled/exit_filled/HALT-relevant
-    # event) that a future tick's fresh checkout will never see. That
-    # silently defeats every journal-derived risk cap (entries_today,
-    # open_positions, ...). Surface it as a tick failure: main() exits
-    # non-zero (a red GitHub Actions run a human notices) and, once this
-    # event DOES reach a future successful push, consecutive_exceptions
-    # sees it too.
-    publish_failed = bool(git_result.get("committed")) and not git_result.get("pushed")
-    if publish_failed:
-        _append_journal("journal_publish_failed", level="critical", git_result=git_result,
-                         note="journal committed locally but push failed -- this runner's state may "
-                              "never reach the next tick's fresh checkout")
-
     return {
-        "ok": not publish_failed, "now": now.isoformat(), "halt_active": halt_active,
+        "ok": True, "now": now.isoformat(), "halt_active": halt_active,
         "orphan_symbols": orphan_symbols, "exits": exits_this_tick,
-        "entry": entry_result, "git": git_result,
+        "entry": entry_result,
     }
 
 
