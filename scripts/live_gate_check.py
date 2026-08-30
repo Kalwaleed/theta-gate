@@ -1,9 +1,11 @@
-"""Standalone live-gate sanity check -- read-only, no journal writes, no git,
-no broker submissions. Mirrors loop.py's _attempt_entry_pipeline exactly
-(same functions, same state-building, same gate-loop order) so results
-reflect real production wiring, not a simplified stand-in. Run manually,
-market open or closed, to check the deterministic gate stack (market.py ->
-spread.py -> risk.py) and brain.py's live SDK call against real data.
+"""Standalone live-gate smoke check -- read-only, no journal writes, no git,
+no broker submissions. Mirrors loop.py's _attempt_entry_pipeline's functions
+and call order (same market.py -> brain.py -> spread.py -> risk.py wiring,
+same state-building) but walks the gates from a clean Monday-open state: no
+open positions, entries_today 0, no journal read. Run manually or as the
+agent.yml `gate_check` dispatch, market open or closed, to check the
+deterministic gate stack and brain.py's live SDK call against real data.
+Exits 1 on any collected failure so a runner smoke job fails loudly.
 """
 
 import dataclasses
@@ -25,6 +27,7 @@ ET = ZoneInfo("America/New_York")
 
 def main():
     now = datetime.now(ET)
+    failures = []
     print(f"=== live-gate sanity check -- {now.isoformat()} ===\n")
 
     with open("governance.json", encoding="utf-8") as f:
@@ -34,6 +37,12 @@ def main():
     account = alpaca.account(profile="submission")
     account_state = loop._map_account_state(account)
     print(json.dumps(account_state, indent=2))
+    # An account-level veto (status, options level) would otherwise only
+    # show up as a tally line per candidate and exit 0.
+    account_reason = risk.gate_account_ready(dict(account_state), None, gov, now)
+    if account_reason:
+        print(f"account gate: {account_reason}")
+        failures.append(f"account_ready: {account_reason}")
 
     print("\n--- regime state (VIX family + event calendar) ---")
     try:
@@ -52,10 +61,25 @@ def main():
                                                     rv_lookback_days=gov["vrp"]["realised_vol_lookback_days"])
         except market.MarketDataError as exc:
             print(f"{u}: MarketDataError: {exc}")
+            failures.append(f"{u}_market_data: {exc}")
             continue
         underlying_states[u] = u_state
-        print(f"{u}: spot={u_state['spot']:.2f}  rv20={u_state['realised_vol_20d']:.4f}  "
-              f"intraday_move={u_state['intraday_move_pct']:.4%}  contracts={len(u_state['contracts'])}")
+        contracts, spot = u_state["contracts"], u_state["spot"]
+        strikes = sorted(c.strike for c in contracts)
+        lo, hi = (strikes[0], strikes[-1]) if strikes else (0.0, 0.0)
+        print(f"{u}: spot={spot:.2f}  rv20={u_state['realised_vol_20d']:.4f}  "
+              f"intraday_move={u_state['intraday_move_pct']:.4%}  contracts={len(contracts)}  "
+              f"expiries={len({c.expiry for c in contracts})}  strikes={lo:.2f}..{hi:.2f}")
+        # The chain's strike window must span the short-delta band and bracket
+        # spot, or rank_candidates has nothing to rank. Expiry count is
+        # informational only: on a weekend the 6-9 DTE window can hold a
+        # single expiry.
+        if len(contracts) < 20:
+            failures.append(f"{u}_contracts: {len(contracts)} < 20")
+        if lo > 0.95 * spot:
+            failures.append(f"{u}_min_strike: {lo:.2f} > 0.95 * spot ({0.95 * spot:.2f})")
+        if hi < spot:
+            failures.append(f"{u}_max_strike: {hi:.2f} < spot ({spot:.2f})")
 
     print("\n--- brain.propose (real SDK call, real market data, no fabricated context) ---")
     brain_context = {u: {k: v for k, v in s.items() if k != "contracts"} for u, s in underlying_states.items()}
@@ -64,13 +88,20 @@ def main():
     print(f"schema_version={propose_result.schema_version}  model={propose_result.model}  "
           f"latency={propose_result.latency_seconds:.2f}s")
     print(f"raw_response: {propose_result.raw_response!r}"[:500])
+    direction = "bull_put"  # diagnostic default: the only direction V1 ever proposes real strikes for
     if propose_result.proposal:
         print(f"proposal: {dataclasses.asdict(propose_result.proposal)}")
+        direction = risk.resolve_direction(propose_result.proposal.direction)
+        if direction is None:
+            # HARD_SAFETY (canonical Sec 6.1): bearish is NO_TRADE by design, not a failure;
+            # keep the diagnostic gate walk on bull_put so the stack is still exercised.
+            print("direction: bearish -> NO_TRADE by design; gate walk below uses bull_put for diagnostics")
+            direction = "bull_put"
     else:
         print("proposal: None (model_failure_or_malformed)")
+        failures.append("proposal_none")
 
     print("\n--- gate stack, every candidate, both directions reachable in V1 ---")
-    direction = risk.resolve_direction("bullish")  # -> "bull_put", the only direction V1 ever proposes real strikes for
     for u, u_state in underlying_states.items():
         candidates = spread.rank_candidates(
             u_state["contracts"], direction, gov["strategy"]["width_dollars"],
@@ -104,6 +135,12 @@ def main():
         else:
             print("  => no candidate passed every gate")
 
+    if failures:
+        print("\n=== FAILURES ===")
+        for failure in failures:
+            print(f"  {failure}")
+        print("=== read-only, nothing journaled, nothing committed, no orders touched ===")
+        sys.exit(1)
     print("\n=== done -- read-only, nothing journaled, nothing committed, no orders touched ===")
 
 
