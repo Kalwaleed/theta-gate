@@ -40,7 +40,7 @@
 \definecolor{loss}{HTML}{B3261E}
 
 \IfFontExistsTF{IBM Plex Sans}{
-  \setsansfont{IBM Plex Sans}[UprightFont=* Light, BoldFont=* SemiBold]
+  \setsansfont{IBM Plex Sans}[UprightFont=* Light, BoldFont=* SmBld]
 }{
   \IfFontExistsTF{Helvetica Neue}{\setsansfont{Helvetica Neue}[UprightFont=* Light]}{}
 }
@@ -149,7 +149,7 @@
   \textbf{authority} (deciding whether it may).}
 
   Alpaca automates away the second whenever a human is absent, and replaces it with an
-  assertion that fails closed. \textbf{Theta Gate does the same thing, with eighteen
+  assertion that fails closed. \textbf{Theta Gate does the same thing, with 21
   assertions instead of one.}
 
   \vspace{0.72em}
@@ -187,7 +187,7 @@
 
     \node[llm,below=0.9cm of cron] (brain) {brain.py\\\textcolor{soft}{tools=[]}};
     \node[box,right=0.7cm of brain] (resolve) {spread.py\\strike select};
-    \node[guard,right=0.7cm of resolve] (risk) {\textcolor{accent}{risk.py}\\18 gates, pure};
+    \node[guard,right=0.7cm of resolve] (risk) {\textcolor{accent}{risk.py}\\21 gates, pure};
     \node[box,right=0.7cm of risk] (submit) {Alpaca CLI\\mleg, limit};
 
     \node[box,below=0.85cm of resolve,text width=3.4cm] (journal) {journal.jsonl\\append-only, git-pushed};
@@ -481,7 +481,7 @@
     \begin{column}{0.52\textwidth}
       \textcolor{soft}{\ttfamily\scriptsize THE SYSTEM}
       \begin{itemize}\itemsep2pt
-        \item \kbd{risk.py} --- 18 gates, pure functions, no I/O, time injected
+        \item \kbd{risk.py} --- 21 gates, pure functions, no I/O, time injected
         \item \kbd{spread.py} --- deterministic strike selection and mleg construction
         \item \kbd{loop.py} --- one tick; recovery, reconcile, exits, entry, journal
         \item \kbd{brain.py} --- the single bounded model call
