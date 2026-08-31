@@ -53,10 +53,10 @@ The load-bearing ones:
 | Buying power | floor of $25,000, and ≥ 5 × max loss |
 | Drawdown halt | −1% daily, or equity below $98,000 |
 
-Position size is fixed at two contracts, not computed from a budget. That is deliberate: at the $5
-width and the 10%-of-width credit floor, the worst case a position can carry is $900 against a
-$1,000 per-trade cap, so the cap cannot be reached by sizing alone. Two contracts is more
-variance, not more edge, and the results section says so.
+Position size is fixed at two contracts, not computed from a budget. At the
+$5 width and the 10%-of-width credit floor, the worst case a position can
+carry is $900 against a $1,000 per-trade cap — so the cap cannot be reached
+by sizing alone. Two contracts is more variance, not more edge.
 
 Regime filters block **new entries only**. A volatility spike never
 liquidates an open position or blocks an exit.
