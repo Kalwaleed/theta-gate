@@ -131,3 +131,6 @@
 {"ts": "2026-08-31T15:19:22.053573-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260831-1030-spy", "underlying": "SPY", "credit": 0.61, "cost_to_close": 0.52, "dte": 9, "signal": "hold"}
 {"ts": "2026-08-31T15:19:23.019565-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-08-31T15:19:23.019674-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 1, "entry_attempted": false}
+{"ts": "2026-08-31T15:25:43.183051-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260831-1030-spy", "underlying": "SPY", "credit": 0.61, "cost_to_close": 0.51, "dte": 9, "signal": "hold"}
+{"ts": "2026-08-31T15:25:43.561042-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-08-31T15:25:43.561149-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 1, "entry_attempted": false}
