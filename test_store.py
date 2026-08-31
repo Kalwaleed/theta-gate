@@ -407,7 +407,8 @@ def test_summary_reports_positions_and_realised_pnl(journal, db):
 
 def test_decision_log_is_newest_first_and_parsed(journal, db):
     write(journal,
-          {"ts": "2026-08-31T09:31:00-04:00", "event": "no_trade", "reason": "outside_entry_window"},
+          {"ts": "2026-08-31T09:31:00-04:00", "event": "no_trade",
+           "reason": "delta_band: 0.31 outside 0.16-0.25"},
           entry("tg-e-20260831-1030-spy", "SPY", "2026-08-31T10:31:00-04:00"))
 
     conn = store.rebuild(db, str(journal))
@@ -527,3 +528,69 @@ def test_connect_survives_a_database_replaced_underneath_it(tmp_path):
     db.write_bytes(b"garbage where a database used to be")
     conn = store.connect(str(db), str(journal))
     assert len(store.open_positions(conn)) == 1
+
+
+def test_every_event_loop_can_emit_reaches_the_decision_log(journal, db):
+    """The filter was an ALLOWLIST and it rotted: loop.py emits 30 event
+    types, the log named 12, so 9 of the events an operator most needs
+    were invisible -- assignment_detected, untracked_broker_position,
+    submit_failed, journal_publish_failed, exit_fill_leg_mismatch,
+    force_close_unresolved and the *_stale_unresolved family. `proposal`
+    had already gone missing the same way.
+
+    Reads loop.py's source so a newly-added event type fails HERE rather
+    than being quietly absent from the page nobody diffs.
+    """
+    import re
+    from pathlib import Path
+
+    emitted = set(re.findall(r'_append_journal\(\s*"([a-z_]+)"',
+                             Path(loop.__file__).read_text(encoding="utf-8")))
+    assert emitted, "no journal events found -- did the call shape change?"
+
+    NOISE = {"tick_completed", "exit_evaluated"}
+    write(journal, *[{"ts": f"2026-08-31T10:{i:02d}:00-04:00", "event": e,
+                      "reason": "something happened"}
+                     for i, e in enumerate(sorted(emitted))])
+
+    conn = store.rebuild(db, str(journal))
+    shown = {r["event"] for r in store.decision_log(conn, limit=500)}
+    missing = (emitted - NOISE) - shown
+    assert not missing, f"loop.py can emit these but the dashboard hides them: {sorted(missing)}"
+
+
+def test_the_highest_stakes_failure_is_visible(journal, db):
+    """force_close_unresolved fires when Thursday's mandatory flatten
+    fails to close a position. It is the single most important event of
+    the week and the old allowlist did not include it."""
+    write(journal, {"ts": "2026-09-03T15:45:00-04:00", "event": "force_close_unresolved",
+                    "level": "critical", "position_id": "tg-e-20260831-1030-spy"})
+    conn = store.rebuild(db, str(journal))
+    assert [r["event"] for r in store.decision_log(conn)] == ["force_close_unresolved"]
+
+
+def test_per_tick_noise_stays_out(journal, db):
+    """40 tick_completed and 26 exit_evaluated rows in one session would
+    bury the two decisions that matter."""
+    write(journal,
+          {"ts": "2026-08-31T10:00:00-04:00", "event": "tick_completed", "ok": True},
+          {"ts": "2026-08-31T10:05:00-04:00", "event": "exit_evaluated",
+           "position_id": "p1", "signal": "hold"},
+          {"ts": "2026-08-31T10:06:00-04:00", "event": "no_trade",
+           "reason": "outside_entry_window"},
+          entry("p1", "SPY", "2026-08-31T10:31:00-04:00"))
+
+    conn = store.rebuild(db, str(journal))
+    assert [r["event"] for r in store.decision_log(conn)] == ["entry_filled"]
+
+
+def test_a_real_gate_veto_is_never_treated_as_noise(journal, db):
+    """Only outside_entry_window is dropped. Every other no_trade reason,
+    gate vetoes included, is a decision about a real candidate."""
+    write(journal,
+          {"ts": "2026-08-31T10:31:00-04:00", "event": "no_trade",
+           "reason": "vrp_present: IV-RV 0.8 below the 1.0 floor"},
+          {"ts": "2026-08-31T10:32:00-04:00", "event": "no_trade",
+           "reason": "all_underlyings_at_cap"})
+    conn = store.rebuild(db, str(journal))
+    assert len(store.decision_log(conn)) == 2
