@@ -289,6 +289,11 @@ def build_underlying_state(
         "spot": spot,
         "spot_ts": spot_ts,
         "realised_vol": rv,
+        # The window travels WITH the value (PR #22's point): the old key
+        # was named realised_vol_20d and kept that name when governance
+        # moved to 10 days, so the proposer wrote "20-day" theses over a
+        # 10-day number. A name cannot track a config value; a field can.
+        "realised_vol_lookback_days": rv_lookback_days,
         "prior_close": prior_close,
         "intraday_move_pct": compute_intraday_move(spot, prior_close),
         "contracts": contracts,
