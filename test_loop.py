@@ -877,3 +877,27 @@ def test_a_rehearsal_never_writes_the_real_halt_file(monkeypatch, tmp_path):
     assert json.loads(real.read_text())["active"] is False, "the live kill switch must be untouched"
     assert loop._check_halt()[0] is True, "the rehearsal's own copy must see its own halt"
     assert loop.HALT_PATH != "data/HALT.json" and loop.JOURNAL_PATH != "data/journal.jsonl"
+
+
+def test_a_rehearsal_starts_from_the_real_journal_and_writes_only_the_copy(monkeypatch, tmp_path):
+    """An empty rehearsal journal made the rehearsal useless: the agent
+    derives its open positions from the journal, so it saw nothing to
+    force-close, and the broker's real legs looked untracked (instant
+    halt). The sandbox must seed the copy from the real journal -- and the
+    rehearsal's own writes must never reach the real file."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(loop, "HALT_PATH", "data/HALT.json")
+    monkeypatch.setattr(loop, "JOURNAL_PATH", "data/journal.jsonl")
+    monkeypatch.setattr(loop, "_git_publish", loop._git_publish)
+    loop._append_journal("entry_filled", position_id="tg-e-20260831-1030-spy", underlying="SPY",
+                          short_symbol="SPY260909P00754000", long_symbol="SPY260909P00749000")
+    real_journal = (tmp_path / "data" / "journal.jsonl").read_text()
+
+    loop._rehearsal_sandbox("20260903T143000")
+
+    open_positions = loop._open_positions(loop._read_journal())
+    assert [r["underlying"] for r in open_positions] == ["SPY"], "the copy must carry the real open position"
+    loop._append_journal("exit_intent", position_id="tg-e-20260831-1030-spy", reason="force_close")
+    assert (tmp_path / "data" / "journal.jsonl").read_text() == real_journal, \
+        "rehearsal writes must never reach the real journal"

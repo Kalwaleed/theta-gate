@@ -1269,26 +1269,30 @@ def _run_tick_body(now, dry_run, profile):
 
 def _rehearsal_sandbox(stamp):
     """Point every real file a rehearsal tick would write at a throwaway
-    copy. Two of them, and the second is the one that bites:
+    copy, each SEEDED from the real file so the tick starts from live
+    state and only the writes are sandboxed:
 
     - JOURNAL_PATH -- --dry-run still journals for real, so a rehearsal
       would append exit_intent rows for a fabricated Thursday into the
-      append-only audit trail judges read and _open_positions derives
-      state from.
+      append-only audit trail judges read. Seeded, not empty: the agent
+      derives its open positions from this file, and an empty copy made
+      the rehearsal useless -- _open_positions saw nothing, the broker's
+      real legs looked untracked (instant halt), and the force-close
+      ladder had no position to walk.
     - HALT_PATH -- _trigger_halt writes even under --dry-run, deliberately
       (it records a fact about live broker state, not a trading action).
       A rehearsal reaching it stops the live cron, and because the first
       reason wins, the genuine halt that follows can no longer state its
-      own reason. Seeded from the real file so a real active HALT is still
-      visible to _check_halt, and so the trigger -> re-check feedback
-      within a tick behaves exactly as it would live.
+      own reason. Seeding keeps a real active HALT visible to _check_halt,
+      and the trigger -> re-check feedback within a tick behaves as live.
     """
-    globals()["JOURNAL_PATH"] = f"data/rehearsal-{stamp}.jsonl"
-    real_halt = Path(HALT_PATH)
-    globals()["HALT_PATH"] = f"data/rehearsal-{stamp}.halt.json"
-    if real_halt.exists():
-        Path(HALT_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(HALT_PATH).write_text(real_halt.read_text(encoding="utf-8"), encoding="utf-8")
+    for var, copy_path in (("JOURNAL_PATH", f"data/rehearsal-{stamp}.jsonl"),
+                           ("HALT_PATH", f"data/rehearsal-{stamp}.halt.json")):
+        real = Path(globals()[var])
+        globals()[var] = copy_path
+        if real.exists():
+            Path(copy_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(copy_path).write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
     globals()["_git_publish"] = lambda _now: {"committed": False, "pushed": False,
                                               "skipped": "rehearsal"}
 
