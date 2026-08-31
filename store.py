@@ -497,14 +497,40 @@ def equity_curve(conn, starting_equity):
 
 
 def decision_log(conn, limit=200):
-    """Entry/exit/no-trade history newest-first, for the dashboard's
-    decision table."""
+    """Everything that happened, newest first, minus routine per-tick noise.
+
+    This was an ALLOWLIST of twelve event names, and it silently rotted:
+    loop.py emits thirty, so nine of the events an operator most needs to
+    see were invisible on the dashboard -- assignment_detected,
+    untracked_broker_position, submit_failed, journal_publish_failed,
+    exit_fill_leg_mismatch, force_close_unresolved and the
+    *_stale_unresolved family. `proposal` had already gone missing the
+    same way and was fixed by hand.
+
+    The worst of those is force_close_unresolved. It fires when Thursday's
+    mandatory flatten fails to close a position -- the single highest-stakes
+    event of the week -- and the page would not have shown it.
+
+    So it is a DENYLIST now. A new event type added to loop.py appears
+    automatically; only noise has to be named. An allowlist fails closed
+    on visibility, which is the wrong direction for a page whose job is to
+    show what happened.
+
+    Excluded, and why each is safe to drop:
+      tick_completed   fires every 5-20 minutes all session, ~40/day, and
+                       carries no decision.
+      exit_evaluated   per-tick mark-to-market telemetry, 26 on 31 Aug
+                       alone, almost always signal=hold. When an exit
+                       actually triggers, exit_intent follows and IS shown.
+      no_trade with reason outside_entry_window -- the loop declining to
+                       look, not a decision about a candidate. Every other
+                       no_trade reason, gate vetoes included, is shown.
+    """
     rows = conn.execute(
         "SELECT seq, ts, session_date, event, level, position_id, underlying, reason, gate, payload"
-        " FROM events WHERE event IN"
-        " ('proposal','entry_intent','entry_filled','entry_unfilled','exit_intent',"
-        "  'exit_filled','exit_unfilled','no_trade','naked_leg_detected',"
-        "  'reconciliation_mismatch','not_paper_abort','tick_exception')"
+        " FROM events"
+        " WHERE event NOT IN ('tick_completed','exit_evaluated')"
+        "   AND NOT (event = 'no_trade' AND reason = 'outside_entry_window')"
         " ORDER BY seq DESC LIMIT ?",
         (limit,),
     ).fetchall()
