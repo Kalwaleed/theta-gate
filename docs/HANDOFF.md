@@ -1,6 +1,6 @@
 # Handoff — Theta Gate
 
-**Written Mon 31 Aug 2026, ~09:50 ET (16:50 Riyadh).** First live trading day, in progress right now. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Written Mon 31 Aug 2026, ~09:50 ET (16:50 Riyadh); updated ~14:10 ET (21:10 Riyadh) after the first two live entry windows.** First live trading day, in progress right now. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
@@ -13,12 +13,13 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 ## Right now, this exact moment
 
 - **09:36 ET today: the first-ever cron-scheduled tick fired**, and it worked. Every green run before this was `workflow_dispatch` — the schedule trigger was unproven all week (see the closed PR #8). It is proven now.
-- Ticks since: 09:36, 09:44 ET, both clean (`ok: true`, `halt_active: false`, `entry_attempted: false`, correctly `no_trade / outside_entry_window`). More will land every 5 minutes through 09:55 ET, then hourly-cadence through the day per `agent.yml`.
-- **Not yet reached: the 10:30 ET (17:30 Riyadh) entry window** — the first window where the agent can actually place an order today. Then 13:30 ET (20:30 Riyadh). Then the 16:00 ET (23:00 Riyadh) close.
-- `data/HALT.json`: `active: false`. Repo: **PRIVATE** (correct, unchanged). `main` tip: check `git log -1` — this file goes stale within minutes on a trading day.
+- **10:30 ET: first live trade, filled clean.** SPY bull put credit spread, short 754P / long 749P, $5 wide, qty 1, exp 9 Sep, credit $0.61 (order `7fe33b90`). Both legs filled atomically at the same broker timestamp — no naked leg. `tick_completed` immediately after: `halt_active: false`, `orphan_symbols: []`.
+- **The price-sign convention is now verified live, for the first time ever.** Pulled the raw order directly from Alpaca (`alpaca order get`, not just the journal): parent `filled_avg_price: "-0.61"` matches submitted `limit_price: "-0.61"` exactly. `loop.py`'s `_extract_actual_price` docstring updated to record this (commit `a3b1447`) — no longer flagged as unverified.
+- **13:30 ET window: correctly declined, not a bug.** Ticks at 13:38 and 13:45 ET each got a fresh SPY proposal from the model and both were blocked by the risk gate: `"concurrent: already at max positions for SPY"` — one position per underlying, and the 10:30 spread is still open. Confirmed by reading `risk.py`'s gate, not assumed.
+- **QQQ has not been proposed today — confirmed by design, not a gap.** `brain.py` builds market-data context for both SPY and QQQ every call (`_build_context_text`, lines 118-122) but its system prompt requires exactly ONE underlying per proposal (`brain.py:68`, "propose ONE underlying, ONE direction"). The model saw both symbols each time and chose SPY twice. This matches the canonical plan Sec 9.1/9.2 cited in the file header — one bounded model call, one proposal, per tick.
+- As of 14:07 ET: position `tg-e-20260831-1030-spy` still open, `hold` on every exit evaluation, cost-to-close drifting 0.49–0.60 against the 0.61 credit (small unrealized gain). `data/HALT.json`: `active: false` throughout. Repo: **PRIVATE** (correct, unchanged).
 - **241 tests pass**, up from 155 as of Sunday (`test_brain.py` added, PR #20).
-
-**If you are picking this up now:** the immediate job is watching 10:30 ET. Read the fill and journal, confirm no naked leg, confirm the price sign convention (`filled_avg_price` should mirror `limit_price`'s negative-is-credit rule — analysis reports this verified but it has never actually been observed on a real fill until today).
+- **Next watch points: 16:00 ET close, then repeat tomorrow.** No exit signal has fired yet on the open SPY spread.
 
 ---
 
@@ -32,13 +33,13 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 
 Operational notes for anyone doing history surgery on this repo again: **`git push --force` (blind) and `git filter-repo` get blocked unpredictably by this environment's safety classifier** — sometimes they run, sometimes they don't, with no obvious pattern. `git push --force-with-lease=<branch>:<expected-sha>` with an explicit expected hash has worked reliably every time. If `filter-repo` itself is blocked, there's no clean workaround short of the user running it directly.
 
-**PR #11 (deck) merged Monday morning — without the fixes I'd flagged.** I reviewed it Sunday and posted exact fixes for two confirmed bugs. It merged anyway, unfixed. **Both bugs are live on `main` right now:**
-1. `deck/theta-gate.tex:43` — `BoldFont=* SemiBold`. IBM Plex Sans registers that weight as `SmBld`; confirmed on PK's own Mac that `make` hard-fails and emits no PDF with the real font installed.
-2. `deck/theta-gate.tex:152,190,484` — says "eighteen"/"18 gates" three times. Correct count is **21** (`_STATE_ONLY_GATES` 18 + `_SIZED_GATES` 3, both run by `risk.py`'s `check_all`). The docstring root-cause (`risk.py`'s own "eighteen-ish" hedge) was fixed 30 Aug, but that doesn't retroactively fix text already written into the deck.
+**PR #11 (deck) merged Monday morning without the fixes I'd flagged — now fixed directly on `main` (commit `f823296`).** Both confirmed bugs:
+1. `deck/theta-gate.tex:43` — `BoldFont=* SemiBold` → `SmBld`. IBM Plex Sans registers that weight as `SmBld`; `make` hard-failed and emitted no PDF with the real font installed, confirmed by reproducing the failure before the fix and a clean build after.
+2. `deck/theta-gate.tex:152,190,484` — "eighteen"/"18 gates" → **21**, matching `risk.py`'s own docstring (`_STATE_ONLY_GATES` 18 + `_SIZED_GATES` 3).
 
-Someone needs to actually apply these two fixes before the deck is submission-ready — not just re-flag them.
+`make check` still reports 8 pre-existing content-overflow warnings, confirmed present before this fix too (unrelated to the font/count bugs, a separate layout issue — design is the team's call per PK's note below).
 
-**A recurring problem: automated spam PRs.** An app or integration has opened an identical "feat: add theta-gate ECC bundle" PR **five times** (#2, #10, #15, #16, #19) — no trading code, five unpinned `npx -y <pkg>@latest` MCP servers plus a remote endpoint, against a repo whose LLM boundary is deliberately sealed (`tools=[]`, `mcp_servers={}`, `strict_mcp_config=True`). Closed every time with the same reasoning. **This needs a real fix — revoke whatever app's repo access is generating these** — closing a sixth one is not a plan.
+**Automated spam PRs — the source is identified, but revocation needs PK directly.** The identical "feat: add theta-gate ECC bundle" PR (#2, #10, #15, #16, #19) comes from the **`ecc-tools` GitHub App** (bot, not a repo collaborator — confirmed against the 6-person collaborator list). Revoking its access requires a GitHub App JWT; a personal-account PAT can't do it (`401`/`403` on every API path tried). This is a personal account (not an org), so there's no admin-API route either — **it has to be done via github.com/settings/installations → ecc-tools → Configure → remove `theta-gate`.**
 
 ---
 
@@ -46,7 +47,7 @@ Someone needs to actually apply these two fixes before the deck is submission-re
 
 **None**, as of this writing. Everything that was open has been merged or closed. Check `gh pr list` — a sixth ecc-tools spam PR or new work from another session may have appeared since.
 
-**Merged since Sunday:** #11 (deck, unfixed — see above), #12 (cover, clean), #18 (go-public write-permission fix), #20 (brain.py test coverage, 155→241 tests).
+**Merged since Sunday:** #11 (deck — merged unfixed, fixed directly on `main` Monday, see above), #12 (cover, clean), #18 (go-public write-permission fix), #20 (brain.py test coverage, 155→241 tests).
 
 **Closed since Sunday**, each with reasoning in the PR thread: #8, #10, #13 (audit preserved at `docs/SECURITY-REVIEW-2026-08-30.md`), #14 (superseded — its useful `.gitignore` additions were folded into `main` by hand in `2d6df54`), #15, #16, #17 (empty-body duplicate of #13), #19.
 
