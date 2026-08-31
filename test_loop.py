@@ -690,3 +690,166 @@ def test_pipeline_backstops_a_pick_outside_available(tmp_path, monkeypatch):
     assert propose.call_args.args[0]["available_underlyings"] == ["QQQ"]
     no_trades = [e for e in loop._read_journal() if e["event"] == "no_trade"]
     assert no_trades[-1]["reason"] == "underlying_unavailable" and no_trades[-1]["underlying"] == "SPY"
+# Thursday's force-close ladder
+# ---------------------------------------------------------------------------
+#
+# This is the highest-stakes untested code in the repo. As of 31 Aug the
+# agent has opened a position and NEVER closed one -- exit_intent,
+# exit_filled and exit_unfilled are all zero across every session, so the
+# entire close-out path has only ever run in tests. On Thursday 3 Sep it
+# becomes mandatory: it is what decides whether the book is flat and the
+# reported P&L is a settled number.
+#
+# There was no way to rehearse it against the live broker (the ladder is
+# date-triggered and the credentials are not local), so it is exercised
+# here at each rung instead, with the real governance.json.
+
+import json as _json  # noqa: E402
+
+FC_GOV = _json.load(open("governance.json"))
+
+
+def _fc_contracts():
+    short = spread.Contract(symbol="SPY260909P00754000", strike=754.0, delta=-0.20, iv=0.11,
+                            bid=1.00, ask=1.10, expiry="2026-09-09")
+    long_ = spread.Contract(symbol="SPY260909P00749000", strike=749.0, delta=-0.12, iv=0.12,
+                            bid=0.50, ask=0.60, expiry="2026-09-09")
+    return short, long_
+
+
+def _fc_entry():
+    return {"position_id": "tg-e-20260831-1030-spy", "underlying": "SPY", "direction": "bull_put",
+            "expiry": "2026-09-09", "width": 5.0, "credit": 0.61, "qty": 1, "_close_qty": 1,
+            "trade_date": "20260831", "short_symbol": "SPY260909P00754000",
+            "long_symbol": "SPY260909P00749000", "window": "1030"}
+
+
+def _fc_no_broker(monkeypatch):
+    """Stub the one call that reaches the broker. dry_run alone is not
+    enough: _lookup_or_submit runs alpaca.assert_paper first, by design --
+    paper is re-proved before every order path, so it needs the CLI even
+    when the write itself is held back. The ladder's own logic (rung,
+    price, id, cancel-first) is what these tests are about."""
+    monkeypatch.setattr(loop, "_lookup_or_submit",
+                        lambda cid, legs, limit, qty, profile, dry_run: ({}, "dry_run", cid))
+
+
+def _fc_run(at, monkeypatch, tmp_path, open_orders=None, submitted=None):
+    """Drive one rung. dry_run=True so no broker write is attempted; the
+    intent journal row still records the price the ladder chose."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    _fc_no_broker(monkeypatch)
+    short, long_ = _fc_contracts()
+    now = datetime.fromisoformat(f"2026-09-03T{at}:00").replace(tzinfo=ET)
+    result = loop._attempt_force_close(_fc_entry(), short, long_, FC_GOV, now,
+                                       "submission", True, open_orders or [])
+    return result, loop._read_journal()
+
+
+@pytest.mark.parametrize("at,action,price", [
+    # mid = 1.05 - 0.55 = 0.50 ; natural = ask - bid = 1.10 - 0.50 = 0.60
+    ("14:30", "limit_at_mid", 0.50),
+    ("15:00", "cross_the_spread", 0.60),
+    ("15:30", "market_mleg", 0.65),          # natural + 0.05
+])
+def test_each_force_close_rung_picks_its_action_and_price(at, action, price, monkeypatch, tmp_path):
+    """governance.exit.force_close_ladder escalates 14:30 -> 15:00 -> 15:30.
+    Getting the price wrong per rung means either never filling (too
+    passive at 15:30) or overpaying from the first attempt."""
+    result, events = _fc_run(at, monkeypatch, tmp_path)
+    intent = [e for e in events if e["event"] == "exit_intent"][0]
+    assert intent["action"] == action
+    assert intent["limit_price"] == pytest.approx(price)
+    assert intent["reason"] == "force_close"
+    assert result["filled"] is False and result["dry_run"] is True
+
+
+def test_the_final_rung_alerts_instead_of_ordering(monkeypatch, tmp_path):
+    """15:45 is reconcile_and_alert. It must NOT submit -- 15 minutes
+    before the close, a fresh order that half-fills leaves a naked leg
+    overnight with nobody watching. It journals CRITICAL and stops."""
+    result, events = _fc_run("15:45", monkeypatch, tmp_path)
+    assert result["filled"] is False
+    assert not [e for e in events if e["event"] == "exit_intent"], "must not order at the final rung"
+    alert = [e for e in events if e["event"] == "force_close_unresolved"]
+    assert len(alert) == 1 and alert[0]["level"] == "critical"
+
+
+def test_the_market_rung_never_pays_more_than_the_spread_is_worth(monkeypatch, tmp_path):
+    """market_mleg is natural + 0.05, bounded by width - 0.01. On a $5
+    spread, paying $5 to close guarantees the full loss with certainty --
+    worse than letting it expire."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    _fc_no_broker(monkeypatch)
+    # A blown-out quote: natural debit would be 4.99 + 0.05 = 5.04 > width.
+    short = spread.Contract(symbol="SPY260909P00754000", strike=754.0, delta=-0.9, iv=0.4,
+                            bid=4.90, ask=5.00, expiry="2026-09-09")
+    long_ = spread.Contract(symbol="SPY260909P00749000", strike=749.0, delta=-0.7, iv=0.4,
+                            bid=0.01, ask=0.10, expiry="2026-09-09")
+    now = datetime.fromisoformat("2026-09-03T15:30:00").replace(tzinfo=ET)
+    loop._attempt_force_close(_fc_entry(), short, long_, FC_GOV, now, "submission", True, [])
+    intent = [e for e in loop._read_journal() if e["event"] == "exit_intent"][0]
+    assert intent["limit_price"] == pytest.approx(4.99)
+    assert intent["limit_price"] < _fc_entry()["width"]
+
+
+def test_the_rung_tag_carries_the_date(monkeypatch, tmp_path):
+    """The client_order_id's date slot is the POSITION's trade_date, not
+    today's. Without the date in the rung tag, a position still open on
+    Friday computes exactly Thursday's ids and adopts Thursday's stale
+    cancelled orders -- found in review 30 Aug."""
+    _, thu = _fc_run("14:30", monkeypatch, tmp_path)
+    thu_id = [e for e in thu if e["event"] == "exit_intent"][0]["client_order_id"]
+    assert "force0903" in thu_id, thu_id
+
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "friday.jsonl"))
+    _fc_no_broker(monkeypatch)
+    short, long_ = _fc_contracts()
+    friday = datetime.fromisoformat("2026-09-04T14:30:00").replace(tzinfo=ET)
+    loop._attempt_force_close(_fc_entry(), short, long_, FC_GOV, friday, "submission", True, [])
+    fri_id = [e for e in loop._read_journal() if e["event"] == "exit_intent"][0]["client_order_id"]
+    assert "force0904" in fri_id
+    assert fri_id != thu_id, "Friday must not reuse Thursday's order id"
+
+
+def test_an_earlier_rungs_order_is_cancelled_before_the_next_is_sent(monkeypatch, tmp_path):
+    """Two live closing orders on one position can both fill and leave a
+    reversed position. Each rung cancels any other exit order for this
+    underlying first."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    cancelled = []
+    monkeypatch.setattr(loop, "_cancel_and_confirm",
+                        lambda oid, p, g, d: (cancelled.append(oid), {"status": "canceled"})[1])
+    monkeypatch.setattr(loop, "_stale_cancel_settled", lambda o: True)
+    monkeypatch.setattr(loop, "_check_leg_symmetry", lambda *a, **k: True)
+    _fc_no_broker(monkeypatch)
+
+    stale = [{"id": "ord-1430", "client_order_id": "tg-x-20260831-force09031430-spy-s0"}]
+    short, long_ = _fc_contracts()
+    now = datetime.fromisoformat("2026-09-03T15:00:00").replace(tzinfo=ET)
+    loop._attempt_force_close(_fc_entry(), short, long_, FC_GOV, now, "submission", True, stale)
+
+    assert cancelled == ["ord-1430"], "the 14:30 order must be cancelled before the 15:00 rung"
+    events = loop._read_journal()
+    assert any(e["event"] == "force_close_stale_canceled" for e in events)
+
+
+def test_a_stale_order_that_wins_the_race_is_reported_not_re_ordered(monkeypatch, tmp_path):
+    """Alpaca does not guarantee a cancel beats a fill in flight. If the
+    earlier rung actually filled, the position is closed -- submitting the
+    next rung on top would open a new one in the opposite direction."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop, "_cancel_and_confirm",
+                        lambda oid, p, g, d: {"status": "filled", "id": oid,
+                                              "filled_avg_price": "0.50", "client_order_id": "x"})
+    monkeypatch.setattr(loop, "_confirm_flat", lambda *a, **k: True)
+
+    stale = [{"id": "ord-1430", "client_order_id": "tg-x-20260831-force09031430-spy-s0"}]
+    short, long_ = _fc_contracts()
+    now = datetime.fromisoformat("2026-09-03T15:00:00").replace(tzinfo=ET)
+    result = loop._attempt_force_close(_fc_entry(), short, long_, FC_GOV, now, "submission", True, stale)
+
+    assert result["filled"] is True and result.get("raced_stale_fill") is True
+    events = loop._read_journal()
+    assert any(e["event"] == "exit_filled" for e in events)
+    assert not [e for e in events if e["event"] == "exit_intent"], "must not order on top of a fill"

@@ -60,3 +60,9 @@ deck/build/
 # Alpaca allowlist the team relies on, and the file that explicitly denies
 # `position close-all`. Only the .local. sibling is personal.
 .claude/settings.local.json
+
+# Rehearsal journals from `loop.py --as-of` (see its --help). Deliberately
+# NOT data/journal.jsonl: a rehearsal writes events stamped with a
+# fabricated clock, and the real journal is the append-only audit trail
+# judges read. Disposable by design.
+data/rehearsal-*.jsonl
