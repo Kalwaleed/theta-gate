@@ -2,7 +2,7 @@
   "mcpServers": {
     "alpaca": {
       "command": "uvx",
-      "args": ["alpaca-mcp-server"],
+      "args": ["--with", "fastmcp==3.2.0", "alpaca-mcp-server==2.3.0"],
       "env": {
         "ALPACA_API_KEY": "${ALPACA_API_KEY}",
         "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",

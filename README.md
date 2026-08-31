@@ -24,6 +24,8 @@ You'll also want the Alpaca CLI (`brew install alpacahq/tap/cli`) and your own p
 
 **Never run write commands against the submission account.** Its trade history is what judges read as "autonomous" — a manual order on it, even a test, undermines that claim. If you need to poke at the live API, use your own throwaway paper account.
 
+**MCP is the auditor, not the trader.** The trading loop touches the broker through the Alpaca CLI only. Alpaca's MCP server (`alpaca-mcp-server`, pinned `==2.3.0` in `.mcp.json`) runs once per session close in `scripts/mcp_reconcile.py` (cron: `.github/workflows/reconcile.yml`, 16:05 ET): a deliberately separate, read-only integration — exactly two read tools allowed, every write tool denied by name — that diffs the broker's positions and orders against the journal. Two independent code paths agreeing is evidence; one code path agreeing with itself is not. A mismatch is a red run and a `warning` journal event for a human — the reconciler never places, cancels, or closes anything, and never HALTs.
+
 ## Team workflow
 
 Five of us are pushing to the same repo, so a couple of habits keep it boring:

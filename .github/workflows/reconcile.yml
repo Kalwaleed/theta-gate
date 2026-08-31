@@ -1,0 +1,67 @@
+# X2 (ANALYSIS-2026-08-30): once per session close, a SECOND, independent
+# integration -- Alpaca's MCP server, not the CLI the trading loop uses --
+# reads the broker and diffs it against the journal. Read-only by
+# construction (scripts/mcp_reconcile.py allows exactly two read tools and
+# denies every write by name). A mismatch is a red run and a warning
+# journal event for a human -- this workflow never trades and never HALTs.
+#
+# Deliberately NO Alpaca CLI install: the whole point is a code path the
+# trading loop does not share. The MCP server gets the keys directly.
+
+name: MCP Reconcile
+
+on:
+  schedule:
+    # 16:05 ET during EDT. Thursday's run is red BY DESIGN while any F3
+    # phantom-open rows exist unfixed -- that is the auditor working.
+    - cron: "5 20 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  # Same group as the trading tick: a reconcile never runs mid-tick and a
+  # tick never starts mid-reconcile. One pending slot -- a dispatch during
+  # the session shares it.
+  group: theta-gate-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write # mcp_reconcile.py journals its event and git-publishes it
+
+jobs:
+  reconcile:
+    name: Reconcile (read-only MCP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install uv==0.10.4
+
+      - name: Warm the MCP server resolve
+        # A cold uvx resolve can be slower than the SDK's MCP connect
+        # window; resolving the pinned version into uv's cache first makes
+        # the real connect fast and deterministic.
+        run: uvx --with fastmcp==3.2.0 alpaca-mcp-server==2.3.0 --help >/dev/null 2>&1 || true
+
+      - name: Configure git identity for journal commits
+        run: |
+          git config user.name "theta-gate-agent[bot]"
+          git config user.email "theta-gate-agent[bot]@users.noreply.github.com"
+
+      - name: Reconcile
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALPACA_LIVE_TRADE: "false"
+        run: python scripts/mcp_reconcile.py
