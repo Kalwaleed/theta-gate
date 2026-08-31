@@ -49,3 +49,14 @@ deck/*.snm
 deck/*.toc
 deck/*.vrb
 deck/build/
+
+# Agent session state. Written by whatever assistant a teammate happens to
+# run, at whatever depth -- .omc/ has already appeared at the repo root AND
+# inside deck/ during this build. No leading slash, so it matches anywhere.
+.omc/
+
+# Claude Code's per-machine permission overrides. The shared
+# .claude/settings.json IS committed on purpose -- it is the read-only
+# Alpaca allowlist the team relies on, and the file that explicitly denies
+# `position close-all`. Only the .local. sibling is personal.
+.claude/settings.local.json
