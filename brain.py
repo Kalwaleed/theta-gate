@@ -138,6 +138,15 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _parse_json(text: str) -> Any:
+    # The isinstance guard is what makes the `except TypeError` below
+    # reachable at all: _strip_code_fence calls .strip() first, so a
+    # non-str argument raised AttributeError before json.loads ever ran,
+    # and the handler written to catch it never fired. Not reachable from
+    # propose() today -- _run_query always returns a str -- but this
+    # module's contract is that ANY bad input yields no Proposal and never
+    # an exception, and a guard that cannot fire is not a guard.
+    if not isinstance(text, str):
+        return None
     try:
         return json.loads(_strip_code_fence(text))
     except (json.JSONDecodeError, TypeError):
