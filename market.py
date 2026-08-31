@@ -107,7 +107,7 @@ def fetch_vix_family(now: datetime, url_template: str, max_age_days: int = 4) ->
 # Realised vol / intraday move (Alpaca daily bars)
 # ---------------------------------------------------------------------------
 
-def compute_rv20(daily_bars: list[dict], now: datetime, lookback_days: int = 20) -> tuple:
+def compute_realised_vol(daily_bars: list[dict], now: datetime, lookback_days: int = 20) -> tuple:
     """Trailing realised vol, annualised, over the last `lookback_days`
     complete sessions -- the window is governance vrp.realised_vol_lookback_days
     (20 as of 30 Aug 2026; the audit found the key rendered on the dashboard
@@ -118,9 +118,9 @@ def compute_rv20(daily_bars: list[dict], now: datetime, lookback_days: int = 20)
     sessions (N returns need N + 1 closes); returns (None, None) on
     insufficient history or a non-finite/non-positive close rather than
     raising -- a bad bar is a data problem, and gate_vrp_present already
-    rejects a missing realised_vol_20d.
+    rejects a missing realised_vol.
 
-    Returns (rv20, prior_close), where prior_close is the most recent
+    Returns (realised_vol, prior_close), where prior_close is the most recent
     complete session's close (for the caller's intraday-move calculation)
     and does not depend on lookback_days.
     """
@@ -148,8 +148,8 @@ def compute_rv20(daily_bars: list[dict], now: datetime, lookback_days: int = 20)
     log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
     mean = sum(log_returns) / len(log_returns)
     variance = sum((r - mean) ** 2 for r in log_returns) / (len(log_returns) - 1)  # N-1
-    rv20 = math.sqrt(variance) * math.sqrt(252)
-    return rv20, closes[-1]
+    realised_vol = math.sqrt(variance) * math.sqrt(252)
+    return realised_vol, closes[-1]
 
 
 def compute_intraday_move(spot: float, prior_close: float) -> float:
@@ -266,8 +266,8 @@ def build_underlying_state(
     # lookback <= 30. Widen the fetch before raising the governance number past that.
     start = (now.astimezone(ET) - timedelta(days=45)).date().isoformat()
     daily_bars = alpaca.stock_bars(underlying, start=start, limit=45, profile=profile).get("bars", [])
-    rv20, prior_close = compute_rv20(daily_bars, now, lookback_days=rv_lookback_days)
-    if rv20 is None:
+    realised_vol, prior_close = compute_realised_vol(daily_bars, now, lookback_days=rv_lookback_days)
+    if realised_vol is None:
         raise MarketDataError(
             f"{underlying}: fewer than {rv_lookback_days + 1} complete daily sessions for RV{rv_lookback_days}"
         )
@@ -289,7 +289,16 @@ def build_underlying_state(
     return {
         "spot": spot,
         "spot_ts": spot_ts,
-        "realised_vol_20d": rv20,
+        "realised_vol": realised_vol,
+        # The window is governance vrp.realised_vol_lookback_days, and it
+        # has already changed once (20 -> 10 on 30 Aug). It travels WITH
+        # the value because the old key was called realised_vol_20d and
+        # kept that name after the change -- so on 31 Aug the proposer was
+        # handed a 10-day number labelled 20d and wrote "SPY 20-day
+        # realised vol near 7.8%" into a thesis that is now in the
+        # committed journal. A name cannot be trusted to track a config
+        # value; a field can.
+        "realised_vol_lookback_days": rv_lookback_days,
         "prior_close": prior_close,
         "intraday_move_pct": compute_intraday_move(spot, prior_close),
         "contracts": contracts,

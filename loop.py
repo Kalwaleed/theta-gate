@@ -961,7 +961,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         ],
         "entries_today": entries_today,
         "consecutive_exceptions": consecutive_exceptions,
-        "realised_vol_20d": u_state["realised_vol_20d"],
+        "realised_vol": u_state["realised_vol"],
         "intraday_move_pct": u_state["intraday_move_pct"],
         "vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"],
         "event_blackouts": regime["event_blackouts"],

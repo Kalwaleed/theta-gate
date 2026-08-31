@@ -216,7 +216,7 @@ def option_chain(underlying, option_type, expiration_date=None, expiration_date_
 
 def stock_bars(symbol, start, timeframe="1Day", limit=25, adjustment="all", profile="submission"):
     """adjustment defaults to 'all' (split + cash-distribution), verified
-    live 29 Aug 2026 — canonical plan Sec 5.3: RV20 must be computed on
+    live 29 Aug 2026 — canonical plan Sec 5.3: realised vol must be computed on
     adjusted closes, or a stock split reads as a fake huge return."""
     assert_paper(profile)
     return _run(
