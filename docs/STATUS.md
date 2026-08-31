@@ -17,9 +17,10 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 - **The price-sign convention is now verified live, for the first time ever.** Pulled the raw order directly from Alpaca (`alpaca order get`, not just the journal): parent `filled_avg_price: "-0.61"` matches submitted `limit_price: "-0.61"` exactly. `loop.py`'s `_extract_actual_price` docstring updated to record this (commit `a3b1447`) — no longer flagged as unverified.
 - **13:30 ET window: correctly declined, not a bug.** Ticks at 13:38 and 13:45 ET each got a fresh SPY proposal from the model and both were blocked by the risk gate: `"concurrent: already at max positions for SPY"` — one position per underlying, and the 10:30 spread is still open. Confirmed by reading `risk.py`'s gate, not assumed.
 - **QQQ has not been proposed today — confirmed by design, not a gap.** `brain.py` builds market-data context for both SPY and QQQ every call (`_build_context_text`, lines 118-122) but its system prompt requires exactly ONE underlying per proposal (`brain.py:68`, "propose ONE underlying, ONE direction"). The model saw both symbols each time and chose SPY twice. This matches the canonical plan Sec 9.1/9.2 cited in the file header — one bounded model call, one proposal, per tick.
-- As of 14:07 ET: position `tg-e-20260831-1030-spy` still open, `hold` on every exit evaluation, cost-to-close drifting 0.49–0.60 against the 0.61 credit (small unrealized gain). `data/HALT.json`: `active: false` throughout. Repo: **PRIVATE** (correct, unchanged).
-- **241 tests pass**, up from 155 as of Sunday (`test_brain.py` added, PR #20).
-- **Next watch points: 16:00 ET close, then repeat tomorrow.** No exit signal has fired yet on the open SPY spread.
+- **16:00 ET close: watched, and nothing fired.** Position `tg-e-20260831-1030-spy` carries overnight, `hold` on every exit evaluation all day, cost-to-close 0.46–0.49 at the last two ticks against the 0.61 credit (small unrealized gain, well short of the 0.305 take-profit). No `exit_intent`, no naked leg, no orphans; `data/HALT.json` `active: false` and every `tick_completed` `ok: true` throughout. Repo: **PRIVATE** (correct, unchanged).
+- **On present marks this spread most likely exits via Thursday's force-close ladder, not via take-profit.** That ladder is now covered at every rung (PR #24) and rehearsable before its date with `loop.py --as-of` — see Operating notes.
+- **273 tests pass**, up from 155 as of Sunday.
+- **Next watch point: tomorrow's 10:30 ET entry window.** SPY is at its per-underlying cap, so this is the first live exercise of `f7b74b9`'s position-aware routing — the model should be offered QQQ instead of SPY, or no call made at all. Never yet seen live.
 
 ---
 
@@ -39,13 +40,19 @@ Operational notes for anyone doing history surgery on this repo again: **`git pu
 
 `make check` still reports 8 pre-existing content-overflow warnings, confirmed present before this fix too (unrelated to the font/count bugs, a separate layout issue — design is the team's call per PK's note below).
 
-**Automated spam PRs — the source is identified, but revocation needs PK directly.** The identical "feat: add theta-gate ECC bundle" PR (#2, #10, #15, #16, #19) comes from the **`ecc-tools` GitHub App** (bot, not a repo collaborator — confirmed against the 6-person collaborator list). Revoking its access requires a GitHub App JWT; a personal-account PAT can't do it (`401`/`403` on every API path tried). This is a personal account (not an org), so there's no admin-API route either — **it has to be done via github.com/settings/installations → ecc-tools → Configure → remove `theta-gate`.**
+**Automated spam PRs — source identified, and PK revoked it on 31 Aug. Closed.** The identical "feat: add theta-gate ECC bundle" PR (#2, #10, #15, #16, #19) comes from the **`ecc-tools` GitHub App** (bot, not a repo collaborator — confirmed against the 6-person collaborator list). Revoking its access requires a GitHub App JWT; a personal-account PAT can't do it (`401`/`403` on every API path tried). This is a personal account (not an org), so there was no admin-API route either — it had to be done via github.com/settings/installations → ecc-tools → Configure → remove `theta-gate`. **PK did that on 31 Aug.** Confirmed as far as a PAT allows: the `ecc-tools/theta-gate-*` remote branch is gone, all five of its PRs (#2, #10, #15, #16, #19) are closed, and none are open. The revocation itself is not PAT-readable — the real proof is that no sixth spam PR appears. If one does, it was not revoked.
 
 ---
 
 ## Open PRs
 
-**None**, as of this writing. Everything that was open has been merged or closed. Check `gh pr list` — a sixth ecc-tools spam PR or new work from another session may have appeared since.
+**None**, as of 16:15 ET Monday 31 Aug (`gh pr list` returns 0). Everything has been merged or closed. New work from a peer session may appear at any time — more than one session has been committing to this worktree today, so re-check before assuming.
+
+**Merged Monday afternoon:** #23 (decision log was an allowlist — 18 hidden event types, 9 operator-critical), #24 (Thursday's force-close ladder covered at every rung, plus `loop.py --as-of` to rehearse it before its date), #25 (flatten an overnight assignment autonomously).
+
+**Closed Monday afternoon, both sizing changes, both rejected:** #26 (size from the proposer's confidence) and #27 (3 concurrent positions, up to 15 contracts). `governance.json` is unchanged and still canonical: `max_concurrent_positions` 2, one position per underlying, quantity fixed at 1, `max_loss_per_trade_dollars` 1000.
+
+**Follow-up landed on `main` after #24 merged (`c5e37ba`):** `--as-of` sandboxed the rehearsal journal and the git publish but not `data/HALT.json`, and `_trigger_halt` writes even under `--dry-run` by design. A rehearsal could therefore stop the live cron three days before the deadline — and because `_trigger_halt` is first-reason-wins, the genuine halt that followed could no longer state its own reason. `HALT_PATH` is now redirected alongside `JOURNAL_PATH`, seeded from the real file so a real active HALT stays visible to `_check_halt`.
 
 **Merged since Sunday:** #11 (deck — merged unfixed, fixed directly on `main` Monday, see above), #12 (cover, clean), #18 (go-public write-permission fix), #20 (brain.py test coverage, 155→241 tests).
 
