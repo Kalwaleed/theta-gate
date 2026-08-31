@@ -70,8 +70,24 @@ spread at 15:00, market-multileg at 15:30 capped at width − $0.01, and at
 
 ## Alpaca infrastructure implementation
 
-The agent runs as a scheduled GitHub Actions tick against the Alpaca **CLI**,
-on a fresh $100,000 paper account.
+Theta Gate uses all three Alpaca surfaces, and uses them for different jobs
+on purpose. It runs as a scheduled GitHub Actions tick on a fresh $100,000
+paper account.
+
+**The CLI places every order.** Entry, exit and the force-close ladder all go
+through it — one write path, so there is one place to audit.
+
+**The MCP server never places anything.** It runs a separate scheduled job
+that reconciles the broker's own view of positions and orders against the
+journal. Two read tools are allowed (`get_all_positions`, `get_orders`); all
+ten write tools in the trading toolset are denied by name, and the permission
+mode denies anything unlisted, so the deny list is redundancy rather than the
+control. It reads structured tool results only, never the model's prose,
+writes one journal event per run, and exits non-zero on a mismatch — the job
+goes red rather than reporting a clean book it cannot prove.
+
+Separating them is the point: the component that verifies the books is not
+the component that writes them.
 
 - **Paper is re-proved before every order path**, not once at startup.
   Unproven is treated as live and refuses.
@@ -84,10 +100,12 @@ on a fresh $100,000 paper account.
   recovered by re-reading it, not by trusting runner memory.
 - **Reconciliation runs before anything else** each tick: orphan broker
   positions, untracked symbols and assignment are detected and halt entries.
+- **A second, independent reconciliation** runs daily over MCP, so a bug in
+  the CLI path cannot also be the thing that certifies the CLI path.
 
 ## Disclosures
 
-Two, stated plainly because judges should not have to find them.
+Three, stated plainly because judges should not have to find them.
 
 **The VRP thresholds were re-based on 30 Aug with Friday's marks in view.**
 The realised-vol window moved 20 → 10 days and the margin 2.0 → 1.0 points,
@@ -98,3 +116,10 @@ data it would be applied to, and that is worth knowing.
 
 **Commit `96fd434` (1,049 lines) landed 3h40m before kickoff.** The account is
 fresh and every trade in it is inside the window; the scaffolding was not.
+
+**Three `mcp_reconciliation_failed` rows sit in the journal at 16:41–16:42 ET
+on 31 Aug.** They are development runs of the reconciliation job, made before
+its dependency pin was fixed, and they wrote into the live trail because the
+job did not yet sandbox its own journal. A second session caught it and it
+was fixed the same hour. The rows stay because the trail is append-only —
+which is the property that makes it worth trusting.
