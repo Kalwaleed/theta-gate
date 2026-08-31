@@ -404,6 +404,104 @@ def _check_leg_symmetry(short_symbol, long_symbol, profile, position_id, context
     return False
 
 
+def _flatten_assigned_equity(positions, gov, profile, dry_run):
+    """Close shares delivered by an overnight assignment, autonomously.
+
+    Previously this path detected the assignment, journaled CRITICAL, and
+    waited for a human -- because alpaca.py had no stock-order primitive
+    and shipping one untested was judged the larger risk. PK accepted that
+    risk on 31 Aug: an agent that needs someone awake at 09:30 is not the
+    autonomous agent this is meant to be.
+
+    What assignment actually costs, so the urgency is not overstated: a
+    short 754 put assigned delivers 100 SPY per contract at 754. The long
+    749 put is still held, so the combined position is a synthetic long
+    call and MAX LOSS IS UNCHANGED at width x 100 minus credit. The danger
+    is not a blowup, it is capital -- ~$75,400 of stock per contract
+    against a $100,000 account, which is a margin call and a broker
+    liquidation on paper.
+
+    So this sells the shares back promptly with an explicit, priced,
+    single-symbol order. Never `position close`, never `close-all`: those
+    are five of the operations Alpaca's own skill requires a human "yes"
+    for regardless of confirmation_mode, and
+    governance.operational.no_bulk_operations forbids the family outright.
+
+    Still HALTs afterwards. Flattening the stock is not the same as
+    understanding why it appeared, and the remaining option leg is now
+    unpaired -- entries stay blocked until a human has looked. Autonomy
+    here means "does not need rescuing", not "carries on trading as if
+    nothing happened".
+    """
+    results = []
+    for pos in positions:
+        if pos.get("asset_class") != "us_equity":
+            continue
+        symbol = pos.get("symbol")
+        raw_qty = int(float(pos.get("qty", 0) or 0))
+        if raw_qty == 0:
+            continue
+        # Long stock from a short PUT assignment sells; short stock from a
+        # short CALL assignment buys back. resolve_direction means only
+        # bull_put trades today, so the long branch is the live one -- the
+        # short branch is written because a position that should not exist
+        # is exactly the one worth handling generically.
+        side = "sell" if raw_qty > 0 else "buy"
+        qty = abs(raw_qty)
+
+        try:
+            quote = (alpaca.latest_quote(symbol, profile=profile) or {}).get("quote") or {}
+            bid, ask = float(quote.get("bp") or 0), float(quote.get("ap") or 0)
+        except Exception as exc:  # noqa: BLE001 -- a quote failure must not abort the tick
+            _append_journal("assignment_flatten_failed", level="critical", symbol=symbol,
+                             error=f"quote unavailable: {exc}")
+            results.append({"symbol": symbol, "ok": False, "reason": "quote_unavailable"})
+            continue
+
+        if bid <= 0 or ask <= 0 or ask < bid:
+            _append_journal("assignment_flatten_failed", level="critical", symbol=symbol,
+                             bid=bid, ask=ask, error="unusable quote -- refusing to price blind")
+            results.append({"symbol": symbol, "ok": False, "reason": "bad_quote"})
+            continue
+
+        # Cross the spread so it is marketable, then bound it. An unpriced
+        # market order on a gapping open is the mistake this whole codebase
+        # exists to avoid; a limit 0.5% through the touch fills in a normal
+        # book and refuses to chase a broken one.
+        slip = gov["operational"].get("assignment_flatten_slippage_pct", 0.005)
+        limit = round(bid * (1 - slip), 2) if side == "sell" else round(ask * (1 + slip), 2)
+
+        # Deterministic per symbol per day: a retry recomputes the same id
+        # and Alpaca answers 422 rather than selling the shares twice.
+        trade_date = datetime.now(ET).strftime("%Y%m%d")
+        cid = f"tg-flat-{trade_date}-{symbol.lower()}"
+
+        _append_journal("assignment_flatten_intent", level="critical", symbol=symbol, side=side,
+                         qty=qty, limit_price=limit, bid=bid, ask=ask, client_order_id=cid,
+                         dry_run=dry_run)
+
+        existing = alpaca.get_order_by_client_id(cid, profile=profile)
+        if existing and existing.get("id"):
+            _append_journal("assignment_flatten_adopted", symbol=symbol, client_order_id=cid,
+                             order_id=existing.get("id"), status=existing.get("status"))
+            results.append({"symbol": symbol, "ok": True, "adopted": True})
+            continue
+
+        order = alpaca.submit_equity(symbol, qty, side, limit, cid,
+                                      dry_run=dry_run, profile=profile)
+        if not order.get("id"):
+            _append_journal("assignment_flatten_failed", level="critical", symbol=symbol,
+                             client_order_id=cid, response=str(order)[:400], dry_run=dry_run)
+            results.append({"symbol": symbol, "ok": False, "reason": "submit_failed"})
+            continue
+
+        _append_journal("assignment_flatten_submitted", symbol=symbol, side=side, qty=qty,
+                         limit_price=limit, order_id=order.get("id"), client_order_id=cid,
+                         status=order.get("status"), dry_run=dry_run)
+        results.append({"symbol": symbol, "ok": True, "order_id": order.get("id")})
+    return results
+
+
 def _extract_actual_price(order, fallback):
     """Prefers the order's actual filled_avg_price; falls back to the
     limit price we submitted at if absent. Sign convention mirrors
@@ -1175,11 +1273,17 @@ def _run_tick_body(now, dry_run, profile):
     orphan_symbols = risk.detect_orphan_equity(positions)
     block_entries_orphan = bool(orphan_symbols)
     if orphan_symbols:
-        _append_journal(
-            "assignment_detected", level="critical", symbols=orphan_symbols, flatten_attempted=False,
-            gap="alpaca.py exposes no stock-order submission method -- not added this session "
-                "(alpaca.py's write boundary was out of scope this diff). Needs a human decision.",
-        )
+        _append_journal("assignment_detected", level="critical", symbols=orphan_symbols,
+                         flatten_attempted=True)
+        flatten = _flatten_assigned_equity(positions, gov, profile, dry_run)
+        # HALT regardless of whether the sell worked. Flattening the stock
+        # is not the same as understanding why it appeared, and the option
+        # leg that was NOT assigned is now unpaired. Entries stay blocked
+        # until a human has looked -- autonomy here means "does not need
+        # rescuing", not "carries on trading as if nothing happened".
+        _trigger_halt(f"overnight assignment: {sorted(orphan_symbols)} -- "
+                      f"flatten {'submitted' if all(r.get('ok') for r in flatten) else 'INCOMPLETE'}")
+        halt_active = True
 
     # Step 6 -- exits run regardless of HALT/orphan-block, deterministic, before any entry logic
     journal_events = _read_journal()

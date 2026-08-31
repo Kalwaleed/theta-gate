@@ -311,6 +311,52 @@ def submit_mleg(legs, limit_price, client_order_id, qty=1, time_in_force="day", 
     return _run(*args, profile=profile, allow_error=True)
 
 
+def submit_equity(symbol, qty, side, limit_price, client_order_id,
+                  time_in_force="day", dry_run=False, profile="submission"):
+    """Submit a single-leg EQUITY limit order. The one stock-order path in
+    this codebase, and it exists for exactly one caller: flattening shares
+    delivered by an overnight assignment.
+
+    Everything about it mirrors submit_mleg deliberately -- assert_paper
+    first, a caller-supplied deterministic client_order_id, errors
+    returned rather than raised -- so the idempotency story is identical.
+    A retry recomputes the same id, Alpaca answers 422, and no second
+    order is created.
+
+    LIMIT ONLY, never market, even though this is a flatten and speed
+    matters. governance.operational documents why the CLI's convenience
+    verbs are off-limits (position close-all, close_position et al require
+    a human "yes" regardless of confirmation_mode) and a bare market order
+    on an illiquid open would be the same class of mistake: an
+    unpriced write nobody bounded. The caller crosses the spread to make
+    it marketable and passes the bound in.
+
+    Deliberately NOT `alpaca position close --symbol`: that is one of the
+    five operations Alpaca's own skill requires human confirmation for,
+    and governance.operational.no_bulk_operations forbids the whole family.
+    An explicit symbol/qty/side/limit order is the sanctioned shape.
+    """
+    assert_paper(profile)
+    if side not in ("buy", "sell"):
+        raise ValueError(f"side must be buy or sell, got {side!r}")
+    if int(qty) <= 0:
+        raise ValueError(f"qty must be positive, got {qty!r}")
+
+    args = [
+        "order", "submit",
+        "--symbol", symbol,
+        "--qty", str(int(qty)),
+        "--side", side,
+        "--type", "limit",
+        "--limit-price", str(limit_price),
+        "--time-in-force", time_in_force,
+        "--client-order-id", client_order_id,
+    ]
+    if dry_run:
+        args.append("--dry-run")
+    return _run(*args, profile=profile, allow_error=True)
+
+
 def list_orders(status="open", profile="submission"):
     """Live open/working orders — distinct from get_order_by_client_id's
     single lookup. Needed because gate_concurrent only ever saw *filled*
