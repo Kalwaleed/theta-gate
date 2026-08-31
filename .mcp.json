@@ -4,8 +4,8 @@
       "command": "uvx",
       "args": [
         "--with",
-        "fastmcp<3.4",
-        "alpaca-mcp-server",
+        "fastmcp==3.2.0",
+        "alpaca-mcp-server==2.3.0",
         "--env-file",
         ".env"
       ],

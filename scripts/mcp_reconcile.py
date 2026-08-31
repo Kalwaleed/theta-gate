@@ -239,10 +239,20 @@ def is_clean(d):
 
 def main(argv=None):
     args = argparse.ArgumentParser(description="Read-only MCP reconciliation (the auditor, not the trader)")
-    args.add_argument("--no-publish", action="store_true", help="skip the git publish (local runs)")
+    args.add_argument("--no-publish", action="store_true",
+                      help="LOCAL RUNS ONLY. Also redirects the journal to a throwaway "
+                           "data/rehearsal-reconcile-*.jsonl -- a dev run must never write "
+                           "mcp_reconciliation rows into the real audit trail (the same rule "
+                           "as loop.py --as-of; two failed dev rows from 31 Aug are already "
+                           "permanently in the journal because this flag once only skipped git)")
     opts = args.parse_args(argv)
 
     refuse_live()
+    if opts.no_publish:
+        stamp = datetime.now(ET).strftime("%Y%m%dT%H%M%S")
+        loop.JOURNAL_PATH = f"data/rehearsal-reconcile-{stamp}.jsonl"
+        print(f"LOCAL RUN  journal={loop.JOURNAL_PATH}  (real journal untouched, no git publish)",
+              file=sys.stderr)
 
     if not loop._acquire_lock():
         print("tick lock held -- a trading tick is running; not reconciling mid-tick", file=sys.stderr)

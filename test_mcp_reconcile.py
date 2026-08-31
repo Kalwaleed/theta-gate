@@ -257,3 +257,28 @@ def test_no_publish_flag_skips_git(monkeypatch, tmp_path):
     publishes = []
     rc, _ = _main_with(monkeypatch, tmp_path, ([], [], None), publishes, no_publish=True)
     assert rc == 0 and publishes == []
+
+
+def test_no_publish_also_sandboxes_the_journal(monkeypatch, tmp_path):
+    """A dev run must never write into the real audit trail -- the same
+    rule the rehearsal sandbox enforces for loop.py --as-of. Two failed
+    dev rows from 31 Aug are permanently in the journal because this flag
+    once only skipped git."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    real = "data/journal.jsonl"
+    monkeypatch.setattr(loop, "JOURNAL_PATH", real)
+    monkeypatch.setattr(loop, "LOCK_PATH", "data/lock")
+    monkeypatch.setenv("ALPACA_LIVE_TRADE", "false")
+    monkeypatch.setattr(loop, "_git_publish", lambda now: pytest.fail("must not publish"))
+    async def fake_fetch(options):
+        return [], [], None
+    monkeypatch.setattr(mr, "fetch_broker_state", fake_fetch)
+    monkeypatch.setattr(mr, "build_options", lambda: None)
+
+    rc = mr.main(["--no-publish"])
+
+    assert rc == 0
+    assert not Path(real).exists(), "the real journal must be untouched"
+    sandboxes = list(Path("data").glob("rehearsal-reconcile-*.jsonl"))
+    assert len(sandboxes) == 1 and "mcp_reconciliation" in sandboxes[0].read_text()
