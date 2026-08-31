@@ -406,9 +406,9 @@ def _check_leg_symmetry(short_symbol, long_symbol, profile, position_id, context
 def _extract_actual_price(order, fallback):
     """Prefers the order's actual filled_avg_price; falls back to the
     limit price we submitted at if absent. Sign convention mirrors
-    limit_price's own documented convention -- NOT verified live against a
-    real filled mleg order's response shape this session. Flagged in the
-    build report."""
+    limit_price's own documented convention -- verified live 2026-08-31
+    10:33 ET against order 7fe33b90 (filled_avg_price "-0.61" == submitted
+    limit_price "-0.61")."""
     raw = order.get("filled_avg_price")
     if raw is None:
         return fallback
