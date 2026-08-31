@@ -1,6 +1,6 @@
-# Handoff — Theta Gate
+# Status — Theta Gate
 
-**Written Mon 31 Aug 2026, ~09:50 ET (16:50 Riyadh); updated ~14:10 ET (21:10 Riyadh) after the first two live entry windows.** First live trading day, in progress right now. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Mon 31 Aug 2026, ~14:10 ET (21:10 Riyadh). First live trading day, in progress right now. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
