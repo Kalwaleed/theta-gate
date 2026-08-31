@@ -73,7 +73,7 @@ Respond with STRICT JSON and nothing else: no markdown code fence, no words befo
 
 {{"underlying": "{_VALID_UNDERLYINGS[0]}|{_VALID_UNDERLYINGS[1]}", "direction": "{_VALID_DIRECTIONS[0]}|{_VALID_DIRECTIONS[1]}|{_VALID_DIRECTIONS[2]}", "confidence": 0.0, "thesis": "...", "invalidation": "..."}}
 
-- underlying: exactly "{_VALID_UNDERLYINGS[0]}" or "{_VALID_UNDERLYINGS[1]}".
+- underlying: exactly "{_VALID_UNDERLYINGS[0]}" or "{_VALID_UNDERLYINGS[1]}". When the context lists available_underlyings, pick only from that list — the others already hold a position or hit a session cap, and a pick outside the list is discarded.
 - direction: exactly "{_VALID_DIRECTIONS[0]}", "{_VALID_DIRECTIONS[1]}", or "{_VALID_DIRECTIONS[2]}".
 - confidence: a plain JSON number in [0.0, 1.0], not a string.
 - thesis: at most {_MAX_THESIS_WORDS} words.
@@ -115,6 +115,9 @@ def _build_context_text(context: dict[str, Any], now: datetime) -> str:
     plain text — not a new data source, just the gate inputs restated for
     a model instead of an if-statement."""
     lines = [f"as_of: {now.isoformat()}"]
+    available = context.get("available_underlyings")
+    if available:
+        lines.append("available_underlyings: " + ", ".join(available))
     for underlying in _VALID_UNDERLYINGS:
         data = context.get(underlying)
         if isinstance(data, dict):

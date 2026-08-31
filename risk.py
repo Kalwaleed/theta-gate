@@ -214,7 +214,7 @@ def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
     if not gov["vrp"]["require_atm_iv_gte_realised_vol"]:
         return None
     atm_iv = state.get("atm_iv")
-    realised_vol = state.get("realised_vol_20d")
+    realised_vol = state.get("realised_vol")
     if atm_iv is None or realised_vol is None:
         return "vrp_present: missing IV or realised-vol input — cannot confirm premium exists"
     vrp_points = (atm_iv - realised_vol) * 100

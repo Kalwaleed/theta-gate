@@ -101,7 +101,7 @@ def base_state(**overrides):
         "options_buying_power": 100000,
         "consecutive_exceptions": 0,
         "atm_iv": 0.15,
-        "realised_vol_20d": 0.12,
+        "realised_vol": 0.12,
         # Real Cboe close values, 27 Aug 2026 (verified live in an earlier
         # session) — a genuine passing regime, not an arbitrary fixture.
         "vix": 14.51,
@@ -365,7 +365,7 @@ def test_vrp_tightened_threshold():
     plan = real_plan()
     assert risk.gate_vrp_present(base_state(), plan, GOV, NOW) is None  # 3.0 points
 
-    thin_vrp = base_state(atm_iv=0.125, realised_vol_20d=0.12)  # 0.5 points
+    thin_vrp = base_state(atm_iv=0.125, realised_vol=0.12)  # 0.5 points
     reason = risk.gate_vrp_present(thin_vrp, plan, GOV, NOW)
     assert reason is not None and "vrp_present" in reason
 
@@ -615,7 +615,7 @@ def test_build_underlying_state_passes_strike_window_around_spot():
 
 
 # ---------------------------------------------------------------------------
-# market.compute_rv20 -- the window is governance vrp.realised_vol_lookback_days
+# market.compute_realised_vol -- the window is governance vrp.realised_vol_lookback_days
 # (audit finding strategy-pnl-1: the key was rendered but read by nothing).
 # No behaviour change at the current value: lookback 20 == the old hardcoded
 # 21-session window.
@@ -636,23 +636,23 @@ def _rv_bars(closes):
 
 def _rv_expected(closes):
     log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
-    return statistics.stdev(log_returns) * math.sqrt(252)  # N-1, same as compute_rv20
+    return statistics.stdev(log_returns) * math.sqrt(252)  # N-1, same as compute_realised_vol
 
 
-def test_compute_rv20_default_matches_previous_21_session_window():
+def test_compute_realised_vol_default_matches_previous_21_session_window():
     bars = _rv_bars(RV_CLOSES)
-    default_rv, default_prior = market.compute_rv20(bars, RV_NOW)
-    kwarg_rv, kwarg_prior = market.compute_rv20(bars, RV_NOW, lookback_days=20)
+    default_rv, default_prior = market.compute_realised_vol(bars, RV_NOW)
+    kwarg_rv, kwarg_prior = market.compute_realised_vol(bars, RV_NOW, lookback_days=20)
     assert default_rv == kwarg_rv and default_prior == kwarg_prior
     assert default_prior == RV_CLOSES[-1]
     assert abs(default_rv - _rv_expected(RV_CLOSES[-21:])) < 1e-12
 
 
-def test_compute_rv20_short_lookback_uses_fewer_sessions():
-    rv, prior = market.compute_rv20(_rv_bars(RV_CLOSES), RV_NOW, lookback_days=10)
+def test_compute_realised_vol_short_lookback_uses_fewer_sessions():
+    rv, prior = market.compute_realised_vol(_rv_bars(RV_CLOSES), RV_NOW, lookback_days=10)
     assert abs(rv - _rv_expected(RV_CLOSES[-11:])) < 1e-12
     assert prior == RV_CLOSES[-1]  # prior_close is independent of the window
-    assert market.compute_rv20(_rv_bars(RV_CLOSES[-9:]), RV_NOW, lookback_days=10) == (None, None)
+    assert market.compute_realised_vol(_rv_bars(RV_CLOSES[-9:]), RV_NOW, lookback_days=10) == (None, None)
 
 
 def test_build_underlying_state_passes_lookback():
@@ -660,10 +660,10 @@ def test_build_underlying_state_passes_lookback():
     with patch("market.alpaca.latest_quote", return_value={"quote": {"bp": 769.25, "ap": 769.57, "t": "2026-08-28T20:00:00Z"}}), \
          patch("market.alpaca.stock_bars", return_value={"bars": _rv_bars(RV_CLOSES)}), \
          patch("market.alpaca.option_chain", return_value={"snapshots": {}}), \
-         patch("market.compute_rv20", rv_mock):
+         patch("market.compute_realised_vol", rv_mock):
         state = market.build_underlying_state("SPY", now=RV_NOW, dte_min=6, dte_max=9, rv_lookback_days=10)
     assert rv_mock.call_args.kwargs["lookback_days"] == 10
-    assert state["realised_vol_20d"] == 0.1 and state["prior_close"] == 700.0
+    assert state["realised_vol"] == 0.1 and state["prior_close"] == 700.0
 
 
 def test_build_underlying_state_reports_real_session_count_when_short():

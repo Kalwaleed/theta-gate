@@ -44,6 +44,7 @@ import json
 import os
 import subprocess
 import time
+import types
 from datetime import datetime, timedelta, time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -892,10 +893,35 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
     return {"filled": False, "stage": "s1"}
 
 
+def _available_underlyings(gov, now, open_positions_journal, entries_today, filled_underlyings_today):
+    """Underlyings not already at a position/fill cap, decided by the SAME
+    risk gates that veto a proposal after the fact (gate_concurrent,
+    gate_daily_fill_cap_per_underlying) — a pre-filter, not a second
+    implementation. 31 Aug 2026 (ANALYSIS strategy-pnl-2): the brain saw no
+    position state, proposed SPY into a full book three times, and QQQ was
+    never tried; filtering before the model call fixes that and skips the
+    call entirely when nothing is available."""
+    state = {
+        "open_positions": [{"underlying": r["underlying"]} for r in open_positions_journal],
+        "entries_today": entries_today,
+        "filled_underlyings_today": filled_underlyings_today,
+    }
+    return [
+        u for u in gov["strategy"]["underlyings"]
+        if risk.gate_concurrent(state, types.SimpleNamespace(underlying=u), gov, now) is None
+        and risk.gate_daily_fill_cap_per_underlying(state, types.SimpleNamespace(underlying=u), gov, now) is None
+    ]
+
+
 def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_state,
                              open_positions_journal, entries_today, filled_underlyings_today,
                              consecutive_exceptions, halt_active, open_orders):
     trade_date = now.astimezone(ET).strftime("%Y%m%d")
+
+    available = _available_underlyings(gov, now, open_positions_journal, entries_today, filled_underlyings_today)
+    if not available:
+        _append_journal("no_trade", reason="all_underlyings_at_cap")
+        return {"attempted": True, "filled": False, "reason": "all_underlyings_at_cap"}
 
     try:
         regime = market.build_regime_state(now, gov["entry"]["event_calendar_path"], gov["regime"]["vix_source_url_template"])
@@ -904,7 +930,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         return {"attempted": True, "filled": False, "reason": "regime_data_unavailable"}
 
     underlying_states = {}
-    for u in gov["strategy"]["underlyings"]:
+    for u in available:
         try:
             underlying_states[u] = market.build_underlying_state(
                 u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile=profile,
@@ -916,7 +942,8 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
 
     # brain.propose sees only scalar market numbers, never the raw chain.
     brain_context = {u: {k: v for k, v in s.items() if k != "contracts"} for u, s in underlying_states.items()}
-    brain_context.update({"vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"]})
+    brain_context.update({"vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"],
+                          "available_underlyings": available})
 
     propose_result = brain.propose(brain_context, now)
     _append_journal(
@@ -940,6 +967,13 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         _append_journal("no_trade", reason="unsupported_underlying", underlying=proposal.underlying)
         return {"attempted": True, "filled": False, "reason": "unsupported_underlying"}
 
+    if proposal.underlying not in underlying_states:
+        # Deterministic backstop: the model picked an underlying already at
+        # cap despite available_underlyings in its context. Same outcome the
+        # gates would reach, without pricing a chain first.
+        _append_journal("no_trade", reason="underlying_unavailable", underlying=proposal.underlying)
+        return {"attempted": True, "filled": False, "reason": "underlying_unavailable"}
+
     underlying = proposal.underlying
     u_state = underlying_states[underlying]
 
@@ -961,7 +995,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         ],
         "entries_today": entries_today,
         "consecutive_exceptions": consecutive_exceptions,
-        "realised_vol_20d": u_state["realised_vol_20d"],
+        "realised_vol": u_state["realised_vol"],
         "intraday_move_pct": u_state["intraday_move_pct"],
         "vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"],
         "event_blackouts": regime["event_blackouts"],

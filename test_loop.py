@@ -626,3 +626,67 @@ def test_main_refuses_a_live_tick_outside_github_actions():
     env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
     proc = subprocess.run([sys.executable, "loop.py", "--once"], capture_output=True, text=True, env=env)
     assert proc.returncode != 0 and "refusing a live tick" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# available_underlyings pre-filter (ANALYSIS strategy-pnl-2, 31 Aug 2026):
+# the brain must not be asked to pick from a book that is already full, and
+# an at-cap book must not bill a model call at all.
+# ---------------------------------------------------------------------------
+
+CAP_GOV = {
+    "strategy": {"underlyings": ["SPY", "QQQ"], "dte_min": 6, "dte_max": 9},
+    "risk": {"max_concurrent_positions": 2, "max_positions_per_underlying": 1,
+             "max_filled_entries_per_underlying_per_session": 1},
+    "entry": {"max_new_entries_per_session": 2, "event_calendar_path": "unused"},
+    "regime": {"vix_source_url_template": "unused"},
+    "vrp": {"realised_vol_lookback_days": 10},
+}
+
+
+def test_available_underlyings_reflects_every_cap():
+    assert loop._available_underlyings(CAP_GOV, NOW, [], 0, []) == ["SPY", "QQQ"]
+    spy_open = [{"underlying": "SPY"}]
+    assert loop._available_underlyings(CAP_GOV, NOW, spy_open, 1, ["SPY"]) == ["QQQ"]
+    # a closed SPY round trip still blocks a same-day SPY re-entry (daily fill cap)
+    assert loop._available_underlyings(CAP_GOV, NOW, [], 1, ["SPY"]) == ["QQQ"]
+    both_open = [{"underlying": "SPY"}, {"underlying": "QQQ"}]
+    assert loop._available_underlyings(CAP_GOV, NOW, both_open, 2, ["SPY", "QQQ"]) == []
+    # the session entry cap alone empties the list
+    assert loop._available_underlyings(CAP_GOV, NOW, [], 2, []) == []
+
+
+def test_pipeline_skips_the_model_call_when_every_underlying_is_at_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    with patch("loop.market.build_regime_state", side_effect=AssertionError("must not fetch")), \
+         patch("loop.brain.propose", side_effect=AssertionError("must not call the model")):
+        result = loop._attempt_entry_pipeline(
+            "1030", NOW, CAP_GOV, "submission", False, {},
+            [{"underlying": "SPY"}, {"underlying": "QQQ"}], 2, ["SPY", "QQQ"], 0, False, [])
+    assert result == {"attempted": True, "filled": False, "reason": "all_underlyings_at_cap"}
+    assert [e["reason"] for e in loop._read_journal()] == ["all_underlyings_at_cap"]
+
+
+def test_pipeline_backstops_a_pick_outside_available(tmp_path, monkeypatch):
+    # SPY is open; only QQQ is fetched and offered. The model picks SPY
+    # anyway -> deterministic no_trade before any chain is priced.
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
+    import brain
+    regime = {"vix": 14.0, "vix9d": 12.0, "vix3m": 17.0, "event_blackouts": []}
+    qqq_state = {"spot": 570.0, "realised_vol": 0.10, "prior_close": 569.0,
+                 "intraday_move_pct": 0.001, "contracts": []}
+    pr = brain.ProposeResult(
+        proposal=brain.Proposal("SPY", "neutral", 0.6, "thesis", "invalidation"),
+        schema_version="brain-v1", model="m", latency_seconds=0.1, raw_response="{}")
+    with patch("loop.market.build_regime_state", return_value=regime), \
+         patch("loop.market.build_underlying_state", return_value=qqq_state) as bus, \
+         patch("loop.brain.propose", return_value=pr) as propose, \
+         patch("loop.spread.rank_candidates", side_effect=AssertionError("must not price a chain")):
+        result = loop._attempt_entry_pipeline(
+            "1030", NOW, CAP_GOV, "submission", False, {},
+            [{"underlying": "SPY"}], 1, ["SPY"], 0, False, [])
+    assert result == {"attempted": True, "filled": False, "reason": "underlying_unavailable"}
+    assert bus.call_count == 1 and bus.call_args.args[0] == "QQQ"
+    assert propose.call_args.args[0]["available_underlyings"] == ["QQQ"]
+    no_trades = [e for e in loop._read_journal() if e["event"] == "no_trade"]
+    assert no_trades[-1]["reason"] == "underlying_unavailable" and no_trades[-1]["underlying"] == "SPY"

@@ -107,6 +107,13 @@ def test_the_model_sees_only_gate_inputs(monkeypatch):
     assert "spot=640.0" in text and "vix9d=11.0" in text
 
 
+def test_available_underlyings_renders_only_when_present():
+    text = brain._build_context_text(
+        {"QQQ": {"spot": 570.0}, "available_underlyings": ["QQQ"]}, NOW)
+    assert "available_underlyings: QQQ" in text
+    assert "available_underlyings" not in brain._build_context_text({"SPY": {"spot": 640.0}}, NOW)
+
+
 def test_context_tolerates_missing_and_malformed_underlyings():
     """market.py can hand over a partial context when one underlying's
     data fetch failed. That must render, not raise -- loop.py journals a

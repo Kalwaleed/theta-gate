@@ -67,7 +67,7 @@ def main():
         contracts, spot = u_state["contracts"], u_state["spot"]
         strikes = sorted(c.strike for c in contracts)
         lo, hi = (strikes[0], strikes[-1]) if strikes else (0.0, 0.0)
-        print(f"{u}: spot={spot:.2f}  rv20={u_state['realised_vol_20d']:.4f}  "
+        print(f"{u}: spot={spot:.2f}  rv={u_state['realised_vol']:.4f}  "
               f"intraday_move={u_state['intraday_move_pct']:.4%}  contracts={len(contracts)}  "
               f"expiries={len({c.expiry for c in contracts})}  strikes={lo:.2f}..{hi:.2f}")
         # The chain's strike window must span the short-delta band and bracket
@@ -83,7 +83,8 @@ def main():
 
     print("\n--- brain.propose (real SDK call, real market data, no fabricated context) ---")
     brain_context = {u: {k: v for k, v in s.items() if k != "contracts"} for u, s in underlying_states.items()}
-    brain_context.update({"vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"]})
+    brain_context.update({"vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"],
+                          "available_underlyings": list(underlying_states)})
     propose_result = brain.propose(brain_context, now)
     print(f"schema_version={propose_result.schema_version}  model={propose_result.model}  "
           f"latency={propose_result.latency_seconds:.2f}s")
@@ -110,7 +111,7 @@ def main():
         base_gate_state = {
             **account_state, "paper_verified": True, "halt_active": False,
             "open_positions": [], "entries_today": 0, "consecutive_exceptions": 0,
-            "realised_vol_20d": u_state["realised_vol_20d"], "intraday_move_pct": u_state["intraday_move_pct"],
+            "realised_vol": u_state["realised_vol"], "intraday_move_pct": u_state["intraday_move_pct"],
             "vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"],
             "event_blackouts": regime["event_blackouts"], "filled_underlyings_today": [],
         }
