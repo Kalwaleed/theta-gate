@@ -46,12 +46,17 @@ The load-bearing ones:
 |---|---|
 | Variance risk premium | ATM IV ≥ 10-day realised vol, by ≥ 1.0 vol point |
 | Regime | VIX < 30, VIX9D < VIX3M, intraday move < 2% |
-| Structure | $5 wide, 6–9 DTE, short delta 0.16–0.25 |
+| Structure | $5 wide, 6–9 DTE, short delta 0.16–0.25, 2 contracts |
 | Credit quality | ≥ 10% of width, and within 40% of the 0.8 × delta curve |
 | Concurrency | 2 open positions, 1 per underlying, 1 fill per underlying per session |
 | Loss caps | $1,000 max loss per trade, $3,000 total open risk |
 | Buying power | floor of $25,000, and ≥ 5 × max loss |
 | Drawdown halt | −1% daily, or equity below $98,000 |
+
+Position size is fixed at two contracts, not computed from a budget. That is deliberate: at the $5
+width and the 10%-of-width credit floor, the worst case a position can carry is $900 against a
+$1,000 per-trade cap, so the cap cannot be reached by sizing alone. Two contracts is more
+variance, not more edge, and the results section says so.
 
 Regime filters block **new entries only**. A volatility spike never
 liquidates an open position or blocks an exit.
