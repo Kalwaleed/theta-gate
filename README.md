@@ -2,7 +2,7 @@
 
 An autonomous options-trading agent for the [Alpaca AI Trading Agents Hackathon](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon) (28 Aug – 4 Sep 2026).
 
-**The one idea:** the LLM has read-only tools. Every write goes through deterministic Python. A proposer suggests a direction; it never picks a strike, sizes a position, or holds an order credential. A pure-Python risk guard has final say and cannot be argued with — the breach is not reachable, not merely forbidden.
+**The one idea:** the LLM has no tools at all. Every write goes through deterministic Python. A proposer suggests a direction and states a confidence; it never picks a strike, never holds an order credential, and can move size only inside a band `governance.json` defines and it cannot reach past. A pure-Python risk guard has final say and cannot be argued with — the breach is not reachable, not merely forbidden.
 
 This file is the getting-started guide and team workflow note. The full design doc — architecture, every risk gate, the corrections from live testing, the timeline — lives at **[`docs/PLAN.md`](docs/PLAN.md)**. Read that before touching `risk.py` or `spread.py`. Strategy/architecture authority is **[`docs/THETA_GATE_CANONICAL_PLAN.md`](docs/THETA_GATE_CANONICAL_PLAN.md)** — see `docs/PLAN.md` for which parts of it we build (Scoped V1) and which we deliberately don't (a Postgres/OIDC control-plane, sized for a production system rather than a 5-day paper demo). The final one-page write-up for judging gets built here on Thursday, once there's real trading history to report.
 

@@ -50,7 +50,7 @@ No Postgres/RLS, no OIDC/Sigstore attestation, no immutable-tag promotion, no br
 
 **The LLM has read-only tools. Every write goes through deterministic Python.**
 
-The LLM proposes a direction. It never picks a strike, sizes a position, or holds an order credential. A pure-Python risk guard has final say and cannot be argued with — the breach is not reachable, rather than merely forbidden by a prompt.
+The LLM proposes a direction and states a confidence. It never picks a strike and never holds an order credential. Since 31 Aug that confidence is one input to a deterministic sizing function — it can move the position between `min_contracts` and `max_contracts`, both set in `governance.json`, which no LLM can write to, and the three sized gates still veto the result independently. So the honest claim is *scales within a range Python defines and cannot exceed*, not *has no influence on risk*. A pure-Python risk guard has final say and cannot be argued with — the breach is not reachable, rather than merely forbidden by a prompt.
 
 **Why this lands with these judges specifically.** Alpaca merged their paper-trading skills on **25 Aug 2026 — the day before this plan** — with commit messages reading *"require paper verification on every unattended order path"* and *"route scheduled CLI submissions through the paper-guarded wrapper."* Their own skill mandates human confirmation before every order, which is fundamentally **incompatible with the autonomous agent this hackathon demands.**
 

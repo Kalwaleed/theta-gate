@@ -786,3 +786,106 @@ def test_parse_chain_keeps_zero_bid_only_when_allowed():
     kept = {c.symbol: c for c in spread.parse_chain(snaps, allow_zero_bid=True)}
     assert set(kept) == {"SPY260908P00695000", "SPY260908P00700000"}
     assert kept["SPY260908P00695000"].bid == 0.0 and kept["SPY260908P00695000"].mid == 0.025
+
+
+# ---------------------------------------------------------------------------
+# Confidence-driven sizing — bounded by governance, never by the model
+# ---------------------------------------------------------------------------
+
+def _sized_plan(credit=0.61, width=5.0):
+    base = real_plan()
+    return spread.SpreadPlan(underlying="SPY", direction="bull_put", expiry="2026-09-09",
+                             short=base.short, long=base.long, width=width, credit=credit,
+                             qty=0, max_loss_dollars=(width - credit) * 100)
+
+
+SIZE_GOV = json.load(open("governance.json")) if False else None  # noqa: E731
+
+
+@pytest.fixture
+def size_gov():
+    import json as _j
+    return _j.load(open("governance.json"))
+
+
+@pytest.mark.parametrize("confidence,expected", [
+    (None, 1), (0.0, 1), (0.4, 1), (0.5, 1), (0.6, 1), (0.62, 1),
+    (0.74, 1), (0.75, 2), (0.9, 2), (1.0, 2),
+])
+def test_confidence_maps_to_contracts(confidence, expected, size_gov):
+    assert risk.size_position(_sized_plan(), size_gov, confidence) == expected
+
+
+def test_the_step_up_is_not_fitted_to_observed_output(size_gov):
+    """Every confidence the model has produced is 0.60-0.62 (four
+    proposals, 31 Aug). The threshold sits at 0.75 on the model's own
+    [0,1] scale, so those do NOT size up. Anchoring near 0.6 would tune it
+    to four data points -- the exact criticism levelled at the VRP
+    re-base, and it would apply here too.
+    """
+    for observed in (0.60, 0.60, 0.60, 0.62):
+        assert risk.size_position(_sized_plan(), size_gov, observed) == 1
+
+
+def test_the_model_cannot_exceed_the_governance_ceiling(size_gov):
+    """The whole safety argument. Confidence is an input, not an
+    authority: no value, in range or out, reaches 3 contracts.
+
+    The per-trade cap is raised out of the way first, on purpose. With the
+    real $1,000 cap a missing max_contracts clamp is invisible -- 3
+    contracts at $439 breaches $1,317 and the shrink-to-fit loop quietly
+    walks it back to 2, so the test would pass for the wrong reason.
+    Caught by mutation: deleting the clamp failed nothing until this cap
+    was lifted.
+    """
+    gov = {**size_gov, "risk": {**size_gov["risk"], "max_loss_per_trade_dollars": 100_000}}
+    for c in (0.75, 0.9, 1.0, 1.5, 99.0, float("inf")):
+        qty = risk.size_position(_sized_plan(), gov, c)
+        assert qty <= gov["strategy"]["max_contracts"], f"confidence {c} produced {qty} contracts"
+
+
+def test_confidence_below_the_floor_never_goes_under_the_minimum(size_gov):
+    for c in (-5.0, 0.0, 0.1):
+        assert risk.size_position(_sized_plan(), size_gov, c) >= 1
+
+
+def test_sizing_shrinks_to_fit_the_per_trade_cap_rather_than_refusing(size_gov):
+    """A 2-contract plan that breaches gate_max_loss_per_trade is still a
+    valid 1-contract plan. Returning 0 would silently forfeit a trade the
+    guard allows."""
+    # $1.00 credit on a $6 spread -> $500/contract; 2 would be $1,000... at
+    # the cap. Push width so 2 breaches and 1 does not.
+    gov = {**size_gov, "risk": {**size_gov["risk"], "max_loss_per_trade_dollars": 700}}
+    assert risk.size_position(_sized_plan(), gov, 1.0) == 1
+
+
+def test_a_plan_too_big_for_even_one_contract_returns_zero(size_gov):
+    gov = {**size_gov, "risk": {**size_gov["risk"], "max_loss_per_trade_dollars": 100}}
+    assert risk.size_position(_sized_plan(), gov, 1.0) == 0
+
+
+def test_fixed_mode_ignores_confidence_entirely(size_gov):
+    """The escape hatch. Flipping sizing_mode back reproduces the old
+    behaviour exactly, confidence or not."""
+    gov = {**size_gov, "strategy": {**size_gov["strategy"], "sizing_mode": "fixed"}}
+    for c in (None, 0.1, 0.99):
+        assert risk.size_position(_sized_plan(), gov, c) == gov["strategy"]["fixed_quantity"]
+
+
+def test_the_sized_gates_still_veto_a_confident_oversize(size_gov):
+    """check_all runs gate_max_loss_per_trade, gate_total_open_risk and
+    gate_buying_power_floor AFTER sizing. Maximum confidence must not
+    smuggle a position past an exposure cap."""
+    plan = _sized_plan()
+    state = {
+        "paper_verified": True, "halt_active": False, "account_status": "ACTIVE",
+        "trading_blocked": False, "effective_options_level": 3,
+        "open_positions": [], "entries_today": 0, "filled_underlyings_today": [],
+        # already near the open-risk ceiling: any size must be refused
+        "open_risk_dollars": size_gov["risk"]["max_total_open_risk_dollars"] - 10,
+        "options_buying_power": 500.0,
+        "session_start_equity": 100000.0, "equity": 100000.0,
+        "consecutive_exceptions": 0,
+    }
+    reason, qty = risk.check_all(state, plan, size_gov, NOW, 1.0)
+    assert reason is not None and qty == 0, "a confident proposal must still hit the exposure gates"

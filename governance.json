@@ -1,8 +1,10 @@
 {
-  "_comment": "Every risk number Theta Gate enforces, in one place. Rendered verbatim in the Streamlit dashboard next to the line 'no LLM can write to this file'. No LLM does — brain.py never imports json.dump against this path.",
-
+  "_comment": "Every risk number Theta Gate enforces, in one place. Rendered verbatim in the Streamlit dashboard next to the line 'no LLM can write to this file'. No LLM does \u2014 brain.py never imports json.dump against this path.",
   "strategy": {
-    "underlyings": ["SPY", "QQQ"],
+    "underlyings": [
+      "SPY",
+      "QQQ"
+    ],
     "structure": "vertical",
     "legs": 2,
     "width_dollars": 5,
@@ -13,38 +15,57 @@
     "short_delta_max": 0.25,
     "_credit_quality_comment": "Verified live 26 Aug 2026: credit/width is NOT a fixed 0.20-0.45 band. It tracks ~0.8 x short_delta and falls as width increases (5-wide 0.120 -> 25-wide 0.056). This gate catches a bad quote relative to that curve, not an absolute ratio.",
     "credit_quality_expected_ratio": 0.8,
-    "credit_quality_max_deviation": 0.40,
+    "credit_quality_max_deviation": 0.4,
     "_min_credit_comment": "Fable 5 strategy review, 28 Aug 2026: an absolute floor, separate from the relative credit_quality check above. At the low end of the delta band (0.16) with the relative check's own -40% tolerance, credit can fall to ~$0.38 on a $5 spread and still pass the relative test -- too thin to be worth the mechanical and execution risk. This gate catches that case.",
-    "min_credit_pct_of_width": 0.10,
+    "min_credit_pct_of_width": 0.1,
     "_fixed_quantity_comment": "Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the entire hackathon, not just the first trade. A 5-session sample cannot justify scaling; size_position() no longer computes qty from a max-loss budget.",
-    "fixed_quantity": 1
+    "fixed_quantity": 1,
+    "_sizing_comment": "PK decision, 31 Aug 2026: size scales with the proposer's stated confidence instead of being pinned at one contract. The LLM does NOT size the position -- it supplies one input to a deterministic function whose bounds it cannot influence, and every existing gate still vetoes independently. max_contracts is 2 and not higher because gate_max_loss_per_trade ($1,000) already refuses a third contract at ~$439 max loss each; raising THAT is the real risk decision and was not taken. A useful side effect: at 1 contract the worst case across both positions is $878, below the $1,000 daily-drawdown halt, so that gate was mathematically unreachable. At 2 it can actually fire.",
+    "_sizing_threshold_comment": "confidence_floor/ceiling are the model's own [0,1] scale, NOT fitted to observed output. Every confidence seen so far is 0.60-0.62 (four proposals, 31 Aug), so a threshold placed near 0.6 would be tuned to four data points -- the exact criticism levelled at the VRP re-base. Effective step-up is at 0.75, which those proposals do NOT reach: the mechanism is live but inert until the model expresses genuine conviction. Deliberate.",
+    "sizing_mode": "confidence",
+    "min_contracts": 1,
+    "max_contracts": 2,
+    "confidence_floor": 0.5,
+    "confidence_ceiling": 1.0
   },
-
   "entry": {
-    "windows_et": ["10:30", "13:30"],
+    "windows_et": [
+      "10:30",
+      "13:30"
+    ],
     "max_new_entries_per_session": 2,
     "no_entries_after_date": "2026-09-02",
     "no_entries_after_time_et": "10:45",
-    "_deadline_comment": "Canonical plan Sec 4.3, 29 Aug 2026: Wednesday is morning-only (the afternoon window is dropped — a spread needs enough runway before Thursday's flatten to cover its own bid-ask round trip). This value previously read 16:00, which wrongly left the Wednesday afternoon window open. Sep 4 is NFP day, 08:30 ET, verified against bls.gov this session (data/events_2026-08-31_2026-09-04.json) and falls after Thursday's flatten, so it does not block any entry.",
+    "_deadline_comment": "Canonical plan Sec 4.3, 29 Aug 2026: Wednesday is morning-only (the afternoon window is dropped \u2014 a spread needs enough runway before Thursday's flatten to cover its own bid-ask round trip). This value previously read 16:00, which wrongly left the Wednesday afternoon window open. Sep 4 is NFP day, 08:30 ET, verified against bls.gov this session (data/events_2026-08-31_2026-09-04.json) and falls after Thursday's flatten, so it does not block any entry.",
     "event_calendar_path": "data/events_2026-08-31_2026-09-04.json"
   },
-
   "exit": {
-    "take_profit_pct_of_credit": 0.50,
+    "take_profit_pct_of_credit": 0.5,
     "stop_close_debit_multiple": 2.0,
-    "_stop_comment": "Renamed from stop_loss_multiple_of_credit (canonical plan Sec 2.1, 29 Aug 2026): the multiple applies to the CLOSING DEBIT, not the loss. At credit=$0.60, this multiple gives a $1.20 closing debit and a $0.60 loss (1x credit), not a $1.20 loss. exit_signal()'s arithmetic was already correct — only the name was misleading.",
+    "_stop_comment": "Renamed from stop_loss_multiple_of_credit (canonical plan Sec 2.1, 29 Aug 2026): the multiple applies to the CLOSING DEBIT, not the loss. At credit=$0.60, this multiple gives a $1.20 closing debit and a $0.60 loss (1x credit), not a $1.20 loss. exit_signal()'s arithmetic was already correct \u2014 only the name was misleading.",
     "time_exit_dte": 2,
     "force_close_start_date": "2026-09-03",
     "force_close_start_time_et": "14:30",
     "_force_close_comment": "Canonical plan Sec 8.2, 29 Aug 2026: ladder moved 30 min earlier across the board. The old ladder's forceful rung landed at 15:50, ten minutes before the 16:00 close, with no recovery time if it failed.",
     "force_close_ladder": [
-      {"at_et": "14:30", "action": "limit_at_mid"},
-      {"at_et": "15:00", "action": "cross_the_spread"},
-      {"at_et": "15:30", "action": "market_mleg"},
-      {"at_et": "15:45", "action": "reconcile_and_alert"}
+      {
+        "at_et": "14:30",
+        "action": "limit_at_mid"
+      },
+      {
+        "at_et": "15:00",
+        "action": "cross_the_spread"
+      },
+      {
+        "at_et": "15:30",
+        "action": "market_mleg"
+      },
+      {
+        "at_et": "15:45",
+        "action": "reconcile_and_alert"
+      }
     ]
   },
-
   "risk": {
     "max_loss_per_trade_dollars": 1000,
     "max_total_open_risk_dollars": 3000,
@@ -59,21 +80,18 @@
     "cumulative_drawdown_halt_equity_dollars": 98000,
     "starting_equity_dollars": 100000
   },
-
   "quote_sanity": {
     "min_bid_dollars": 0.01,
     "max_spread_pct_of_mid": 0.15,
     "max_quote_age_seconds": 60
   },
-
   "regime": {
     "_comment": "Canonical plan Sec 4.6, 29 Aug 2026: entry-only regime filters, sourced from Cboe's public VIX-family CSVs. Never blocks exits or liquidates an open position -- a spike blocks NEW entries only.",
     "vix_source_url_template": "https://cdn.cboe.com/api/global/us_indices/daily_prices/{symbol}_History.csv",
     "vix_max_exclusive": 30.0,
     "require_vix9d_lt_vix3m": true,
-    "intraday_move_abs_max_exclusive": 0.020
+    "intraday_move_abs_max_exclusive": 0.02
   },
-
   "vrp": {
     "_comment": "The only edge this strategy claims. Verified live: a fairly priced chain has zero arithmetic edge, negative by exactly the bid-ask cost. Sell premium only when it is actually rich.",
     "_lookback_comment": "PK decision, 30 Aug 2026 (option C in docs/ANALYSIS-2026-08-30.md): 20 -> 10 so the realised-vol window matches the 6-9 DTE tenor being sold. The 30 Aug audit found the gate comparing the front of a contango vol curve against a 20-day RV still carrying the 3-4 Aug rally days: on Friday's marks it vetoed every SPY and QQQ candidate for Mon-Tue (SPY IV 9.9-10.1% vs RV20 10.4%; QQQ 14.8-15.2% vs 18.2%). At 10 days: SPY +2.1..+2.3 pts, QQQ +1.3..+1.7.",
@@ -82,15 +100,20 @@
     "_min_vrp_points_comment": "Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check to a 2.0-vol-point margin -- IV barely above RV is noise, not a priced premium. 30 Aug 2026 (PK, option C): re-based to 1.0 together with the 10-day window above; the 2.0 cushion was sized against a 20-day RV. Chosen with Friday's data in view -- disclosed as such in the write-up.",
     "min_vrp_points": 1.0
   },
-
   "environment": {
-    "paper_flag_true_values": ["true", "1", "yes"],
+    "paper_flag_true_values": [
+      "true",
+      "1",
+      "yes"
+    ],
     "_paper_flag_comment": "Case-insensitive membership test only. Never a truthiness cast. Any value outside this set selects live, including 'paper', 'TRUE ' with a trailing space, and 'yes!'.",
     "required_endpoint": "https://paper-api.alpaca.markets",
-    "required_account_status": ["ACTIVE", "PAPER_ONLY"],
+    "required_account_status": [
+      "ACTIVE",
+      "PAPER_ONLY"
+    ],
     "required_effective_options_level": 3
   },
-
   "operational": {
     "unfilled_order_cancel_after_seconds": 60,
     "order_poll_max_attempts": 60,

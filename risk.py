@@ -228,18 +228,61 @@ def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
 # Exposure group
 # ---------------------------------------------------------------------------
 
-def size_position(plan, gov: dict) -> int:
-    """Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the
-    entire hackathon, not computed from a max-loss budget. A 5-session
-    sample can't justify scaling, and budget-derived sizing was false
-    precision. Still returns 0 — never a fractional or negative size — if
-    even the fixed quantity would breach the per-trade cap; the actual
-    enforcement is gate_max_loss_per_trade below, this just keeps
-    size_position() from ever proposing a doomed qty."""
-    qty = gov["strategy"]["fixed_quantity"]
+def size_position(plan, gov: dict, confidence: float | None = None) -> int:
+    """How many contracts, from a deterministic function of governance and
+    (optionally) the proposer's stated confidence.
+
+    THE LLM DOES NOT SIZE THE POSITION. It supplies one input to this
+    function; the function's bounds, scale and ceiling all live in
+    governance.json, which no LLM can write to. The model cannot reach
+    max_contracts, cannot move the thresholds, and cannot exceed anything:
+    gate_max_loss_per_trade, gate_total_open_risk and
+    gate_buying_power_floor all still run afterwards and still veto
+    independently. Confidence is an input, not an authority.
+
+    That said, this IS a real weakening of the older claim that the model
+    has no influence on risk at all, and the write-up says so rather than
+    hiding it -- "never sizes a position" became "can scale within a range
+    Python defines and cannot exceed".
+
+    Sizing is linear in confidence between confidence_floor and
+    confidence_ceiling, floored, and clamped to [min_contracts,
+    max_contracts]. With the current 1..2 range that reduces to a single
+    step-up at the midpoint, 0.75. The floor and ceiling are the model's
+    own [0,1] scale and are deliberately NOT fitted to observed output:
+    every confidence produced so far is 0.60-0.62, so anchoring near 0.6
+    would tune the threshold to four data points.
+
+    Returns 0 -- never fractional, never negative -- if even the minimum
+    size would breach the per-trade cap. The real enforcement is
+    gate_max_loss_per_trade; this only keeps size_position from proposing
+    a doomed qty.
+    """
     per_contract_loss = (plan.width - plan.credit) * 100
     if per_contract_loss <= 0:
         return 0
+
+    if gov["strategy"].get("sizing_mode") != "confidence" or confidence is None:
+        qty = gov["strategy"]["fixed_quantity"]
+    else:
+        lo = gov["strategy"]["min_contracts"]
+        hi = gov["strategy"]["max_contracts"]
+        floor_c = gov["strategy"]["confidence_floor"]
+        ceil_c = gov["strategy"]["confidence_ceiling"]
+        if hi <= lo or ceil_c <= floor_c:
+            qty = lo
+        else:
+            t = (float(confidence) - floor_c) / (ceil_c - floor_c)
+            t = min(1.0, max(0.0, t))
+            qty = min(hi, lo + int(t * (hi - lo + 1)))
+
+    if qty < 1:
+        return 0
+    # Shrink to fit rather than refusing outright: a 2-contract plan that
+    # breaches the per-trade cap is still a valid 1-contract plan, and
+    # returning 0 there would silently forfeit a trade the guard allows.
+    while qty > 1 and per_contract_loss * qty > gov["risk"]["max_loss_per_trade_dollars"]:
+        qty -= 1
     if per_contract_loss * qty > gov["risk"]["max_loss_per_trade_dollars"]:
         return 0
     return qty
@@ -375,15 +418,24 @@ _SIZED_GATES = [
 ]
 
 
-def check_all(state: dict, plan, gov: dict, now: datetime) -> tuple[str | None, int]:
+def check_all(state: dict, plan, gov: dict, now: datetime,
+              confidence: float | None = None) -> tuple[str | None, int]:
     """Returns (veto_reason_or_None, qty). qty is 0 if vetoed before sizing
-    was relevant, or if sizing itself failed."""
+    was relevant, or if sizing itself failed.
+
+    `confidence` is the proposer's stated conviction, passed to
+    size_position. It can only ever move qty inside the governance-defined
+    band -- the three sized gates below run afterwards on the result and
+    veto independently, so a confident model still cannot exceed the
+    per-trade cap, the open-risk cap, or the buying-power floor.
+    Defaults to None, which reproduces fixed-quantity behaviour exactly.
+    """
     for gate in _STATE_ONLY_GATES:
         reason = gate(state, plan, gov, now)
         if reason:
             return reason, 0
 
-    qty = size_position(plan, gov)
+    qty = size_position(plan, gov, confidence)
     for gate in _SIZED_GATES:
         reason = gate(state, plan, gov, now, qty)
         if reason:

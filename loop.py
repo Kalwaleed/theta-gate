@@ -1008,7 +1008,7 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         expiry_puts = [c for c in u_state["contracts"] if c.expiry == candidate.expiry]
         atm_iv = market.compute_atm_iv(expiry_puts, u_state["spot"])
         gate_state = {**base_gate_state, "atm_iv": atm_iv}
-        reason, qty = risk.check_all(gate_state, candidate, gov, now)
+        reason, qty = risk.check_all(gate_state, candidate, gov, now, proposal.confidence)
         if reason is None:
             winner, winner_qty = candidate, qty
             break
