@@ -61,8 +61,9 @@ deck/build/
 # `position close-all`. Only the .local. sibling is personal.
 .claude/settings.local.json
 
-# Rehearsal journals from `loop.py --as-of` (see its --help). Deliberately
-# NOT data/journal.jsonl: a rehearsal writes events stamped with a
-# fabricated clock, and the real journal is the append-only audit trail
-# judges read. Disposable by design.
-data/rehearsal-*.jsonl
+# Rehearsal journals and HALT copies from `loop.py --as-of` (see its
+# --help). Deliberately NOT data/journal.jsonl or data/HALT.json: a
+# rehearsal writes events stamped with a fabricated clock, the real
+# journal is the append-only audit trail judges read, and the real
+# HALT.json is the live kill switch. Disposable by design.
+data/rehearsal-*

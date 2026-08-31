@@ -853,3 +853,27 @@ def test_a_stale_order_that_wins_the_race_is_reported_not_re_ordered(monkeypatch
     events = loop._read_journal()
     assert any(e["event"] == "exit_filled" for e in events)
     assert not [e for e in events if e["event"] == "exit_intent"], "must not order on top of a fill"
+
+
+def test_a_rehearsal_never_writes_the_real_halt_file(monkeypatch, tmp_path):
+    """_trigger_halt writes data/HALT.json even under --dry-run, by design.
+    A rehearsal reaching it would stop the live cron -- and because the
+    first reason wins, the genuine halt that followed could no longer
+    state its own reason. The sandbox must also keep the copy readable, so
+    the trigger -> re-check feedback inside a tick still behaves as live."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    real = tmp_path / "data" / "HALT.json"
+    real.write_text('{"active": false}\n')
+    # setattr, not assignment: _rehearsal_sandbox mutates these module
+    # globals for good, so monkeypatch has to hold the originals to restore.
+    monkeypatch.setattr(loop, "HALT_PATH", "data/HALT.json")
+    monkeypatch.setattr(loop, "JOURNAL_PATH", "data/journal.jsonl")
+    monkeypatch.setattr(loop, "_git_publish", loop._git_publish)
+
+    loop._rehearsal_sandbox("20260903T143000")
+    loop._trigger_halt("rehearsal tripped a naked-leg check")
+
+    assert json.loads(real.read_text())["active"] is False, "the live kill switch must be untouched"
+    assert loop._check_halt()[0] is True, "the rehearsal's own copy must see its own halt"
+    assert loop.HALT_PATH != "data/HALT.json" and loop.JOURNAL_PATH != "data/journal.jsonl"

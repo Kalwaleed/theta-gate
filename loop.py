@@ -1267,6 +1267,32 @@ def _run_tick_body(now, dry_run, profile):
 # CLI
 # ---------------------------------------------------------------------------
 
+def _rehearsal_sandbox(stamp):
+    """Point every real file a rehearsal tick would write at a throwaway
+    copy. Two of them, and the second is the one that bites:
+
+    - JOURNAL_PATH -- --dry-run still journals for real, so a rehearsal
+      would append exit_intent rows for a fabricated Thursday into the
+      append-only audit trail judges read and _open_positions derives
+      state from.
+    - HALT_PATH -- _trigger_halt writes even under --dry-run, deliberately
+      (it records a fact about live broker state, not a trading action).
+      A rehearsal reaching it stops the live cron, and because the first
+      reason wins, the genuine halt that follows can no longer state its
+      own reason. Seeded from the real file so a real active HALT is still
+      visible to _check_halt, and so the trigger -> re-check feedback
+      within a tick behaves exactly as it would live.
+    """
+    globals()["JOURNAL_PATH"] = f"data/rehearsal-{stamp}.jsonl"
+    real_halt = Path(HALT_PATH)
+    globals()["HALT_PATH"] = f"data/rehearsal-{stamp}.halt.json"
+    if real_halt.exists():
+        Path(HALT_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(HALT_PATH).write_text(real_halt.read_text(encoding="utf-8"), encoding="utf-8")
+    globals()["_git_publish"] = lambda _now: {"committed": False, "pushed": False,
+                                              "skipped": "rehearsal"}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Theta Gate one-tick orchestrator")
     parser.add_argument("--once", action="store_true",
@@ -1282,8 +1308,9 @@ def main():
                          help="REHEARSAL ONLY. Run the tick as though `now` were this instant, so a "
                               "date-triggered path can be exercised before its date arrives -- chiefly "
                               "Thursday's force-close ladder, which is mandatory and has never executed. "
-                              "Requires --dry-run, refuses to run inside GitHub Actions, writes to a "
-                              "throwaway journal instead of data/journal.jsonl, and never git-publishes.")
+                              "Requires --dry-run, refuses to run inside GitHub Actions, redirects both "
+                              "data/journal.jsonl and data/HALT.json to throwaway copies, and never "
+                              "git-publishes.")
     parser.add_argument("--local-live", action="store_true",
                          help="allow a NON-dry-run tick outside GitHub Actions. Off by default: a local live "
                               "tick overlapping the runner's tick cancels the runner's working order mid-ladder "
@@ -1316,17 +1343,14 @@ def main():
             raise SystemExit(f"--as-of: could not parse {args.as_of!r} as ISO 8601")
         now = now.replace(tzinfo=ET) if now.tzinfo is None else now.astimezone(ET)
 
-        # 3. Never the real journal. --dry-run still journals for real, so a
-        #    rehearsal would otherwise append exit_intent rows stamped with a
-        #    fabricated Thursday into data/journal.jsonl -- the append-only
-        #    audit trail that judges read and that _open_positions derives
-        #    state from. Redirect it, and do not publish.
+        # 3. Never a real file. --dry-run still journals for real, and
+        #    _trigger_halt writes data/HALT.json for real too -- a rehearsal
+        #    that trips it would stop the live cron. Redirect both, and do
+        #    not publish. See _rehearsal_sandbox for why each one matters.
         stamp = datetime.now(ET).strftime("%Y%m%dT%H%M%S")
-        globals()["JOURNAL_PATH"] = f"data/rehearsal-{stamp}.jsonl"
-        globals()["_git_publish"] = lambda _now: {"committed": False, "pushed": False,
-                                                  "skipped": "rehearsal"}
-        print(f"REHEARSAL  as-of={now.isoformat()}  journal={JOURNAL_PATH}  "
-              f"(dry-run, no git publish, real journal untouched)")
+        _rehearsal_sandbox(stamp)
+        print(f"REHEARSAL  as-of={now.isoformat()}  journal={JOURNAL_PATH}  halt={HALT_PATH}  "
+              f"(dry-run, no git publish, real journal and HALT.json untouched)")
 
     summary = run_tick(now=now, dry_run=args.dry_run, profile=args.profile)
     print(json.dumps(summary, indent=2, default=str))
