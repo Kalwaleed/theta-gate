@@ -40,7 +40,9 @@ def test_options_never_allow_a_write_tool(monkeypatch):
     assert o.permission_mode == "dontAsk"
     assert o.mcp_servers["alpaca"]["env"]["ALPACA_PAPER_TRADE"] == "true"
     assert o.mcp_servers["alpaca"]["env"]["ALPACA_TOOLSETS"] == "trading"
-    assert "==2.3.0" in o.mcp_servers["alpaca"]["args"][0]
+    args = o.mcp_servers["alpaca"]["args"]
+    assert any(a == "alpaca-mcp-server==2.3.0" for a in args), "server version must stay pinned"
+    assert any(a == "fastmcp==3.2.0" for a in args), "fastmcp must stay pinned (2.3.0 breaks on newer)"
 
 
 def test_refuses_the_live_flag(monkeypatch):
