@@ -229,13 +229,14 @@ def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
 # ---------------------------------------------------------------------------
 
 def size_position(plan, gov: dict) -> int:
-    """Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the
-    entire hackathon, not computed from a max-loss budget. A 5-session
-    sample can't justify scaling, and budget-derived sizing was false
-    precision. Still returns 0 — never a fractional or negative size — if
-    even the fixed quantity would breach the per-trade cap; the actual
-    enforcement is gate_max_loss_per_trade below, this just keeps
-    size_position() from ever proposing a doomed qty."""
+    """A fixed governance quantity, never computed from a max-loss budget
+    (canonical plan Sec 2.12; budget-derived sizing was false precision).
+    2 as of 31 Aug 2026 (X1, PK decision) -- at width 5 the per-trade cap
+    only binds from qty 3 (3 x ~$439 > $1,000). Still returns 0 — never a
+    fractional or negative size — if even the fixed quantity would breach
+    the per-trade cap; the actual enforcement is gate_max_loss_per_trade
+    below, this just keeps size_position() from ever proposing a doomed
+    qty."""
     qty = gov["strategy"]["fixed_quantity"]
     per_contract_loss = (plan.width - plan.credit) * 100
     if per_contract_loss <= 0:

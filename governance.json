@@ -16,8 +16,8 @@
     "credit_quality_max_deviation": 0.40,
     "_min_credit_comment": "Fable 5 strategy review, 28 Aug 2026: an absolute floor, separate from the relative credit_quality check above. At the low end of the delta band (0.16) with the relative check's own -40% tolerance, credit can fall to ~$0.38 on a $5 spread and still pass the relative test -- too thin to be worth the mechanical and execution risk. This gate catches that case.",
     "min_credit_pct_of_width": 0.10,
-    "_fixed_quantity_comment": "Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the entire hackathon, not just the first trade. A 5-session sample cannot justify scaling; size_position() no longer computes qty from a max-loss budget.",
-    "fixed_quantity": 1
+    "_fixed_quantity_comment": "PK decision, 30-31 Aug 2026 (X1, ANALYSIS-2026-08-30 rank 16): 1 -> 2, amending canonical plan Sec 2.12. Landed with partial-fill handling across every order path -- at qty 2 a partial fill is possible and the ladder treats it as THE position (no top-up, no unwind). Max loss ~$880 per position at credit 0.60, inside every cap. Disclosed honestly: this is 4x variance, not 4x edge.",
+    "fixed_quantity": 2
   },
 
   "entry": {
@@ -49,7 +49,7 @@
     "max_loss_per_trade_dollars": 1000,
     "max_total_open_risk_dollars": 3000,
     "max_concurrent_positions": 2,
-    "_max_concurrent_comment": "Canonical plan, 29 Aug 2026: 3 -> 2. SPY and QQQ are one correlated bucket. With width fixed at $5 and quantity fixed at 1, this caps total margin reserve at $1,000 arithmetically -- no separate dollar-reserve gate needed.",
+    "_max_concurrent_comment": "Canonical plan, 29 Aug 2026: 3 -> 2. SPY and QQQ are one correlated bucket. With width fixed at $5 and quantity fixed at 2 (X1, 31 Aug), this caps total margin reserve at $2,000 arithmetically -- no separate dollar-reserve gate needed.",
     "max_positions_per_underlying": 1,
     "max_filled_entries_per_underlying_per_session": 1,
     "_daily_fill_cap_comment": "Canonical plan Sec 4.5, 29 Aug 2026: a morning fill blocks an afternoon re-entry in the same underlying even if that morning spread already closed.",

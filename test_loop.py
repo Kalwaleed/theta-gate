@@ -216,7 +216,7 @@ def test_trigger_halt_first_reason_wins(tmp_path, monkeypatch):
 def test_check_leg_symmetry_detects_naked_leg_and_halts(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
     monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "journal.jsonl"))
-    with patch("loop.alpaca.positions", return_value=[{"symbol": "SHORT_SYM"}]):
+    with patch("loop.alpaca.positions", return_value=[{"symbol": "SHORT_SYM", "qty": "-1"}]):
         symmetric = loop._check_leg_symmetry("SHORT_SYM", "LONG_SYM", "submission", "p1", context="test")
     assert symmetric is False
     active, info = loop._check_halt()
@@ -583,10 +583,17 @@ def _sweep_case(tmp_path, monkeypatch, sibling_after_cancel):
     return result, [e["event"] for e in loop._read_journal()]
 
 
-def test_entry_sweep_gives_up_on_a_partially_filled_sibling(tmp_path, monkeypatch):
-    result, events = _sweep_case(tmp_path, monkeypatch, {"status": "canceled", "filled_qty": "1"})
-    assert result["failed"] is True and result["stale_unresolved"] == "tg-e-20260831-1030-spy-s1"
-    assert events == ["entry_stale_unresolved"]
+def test_entry_sweep_journals_a_partially_filled_sibling_as_the_position(tmp_path, monkeypatch):
+    """X1 (31 Aug 2026): a canceled sibling with filled_qty > 0 is real
+    contracts. Pre-X1 this was entry_stale_unresolved (a dead end that
+    left the fill untracked -> untracked_broker_position HALT next tick);
+    now it is journaled as THE position and the attempt ends -- no top-up."""
+    result, events = _sweep_case(tmp_path, monkeypatch, {"status": "canceled", "filled_qty": "1",
+                                                          "filled_avg_price": "-0.55"})
+    assert result["filled"] is True and result["raced_stale_fill"] is True
+    assert events == ["entry_filled"]
+    fill = loop._read_journal()[0]
+    assert fill["qty"] == 1 and fill["requested_qty"] == 1 and fill["partial"] is False
 
 
 def test_entry_sweep_gives_up_when_the_cancel_is_still_pending(tmp_path, monkeypatch):
@@ -1049,3 +1056,166 @@ def test_a_stale_quote_refuses_to_price_blind(monkeypatch, tmp_path):
     assert sent == [] and result[0] == {"symbol": "SPY", "ok": False, "reason": "stale_quote"}
     failed = [e for e in loop._read_journal() if e["event"] == "assignment_flatten_failed"]
     assert failed and "older than" in failed[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# X1 -- qty 2 with partial-fill handling (31 Aug 2026, ANALYSIS rank 16).
+# The one rule everywhere: a partial fill IS the position (entries) or a
+# piece of the close (exits). Never top up, never resubmit the full qty.
+# ---------------------------------------------------------------------------
+
+def test_filled_qty_parses_broker_strings():
+    assert loop._filled_qty({"filled_qty": "1"}, 0) == 1
+    assert loop._filled_qty({"filled_qty": "2"}, 0) == 2
+    assert loop._filled_qty({"filled_qty": "0"}, 2) == 2      # contradiction -> trust fallback
+    assert loop._filled_qty({}, 2) == 2
+    assert loop._filled_qty({"filled_qty": "garbage"}, 2) == 2
+
+
+def test_entry_s0_partial_stops_the_ladder_no_top_up(tmp_path, monkeypatch):
+    """F18, the bug X1 exists to kill: canceled s0 with 1 of 2 filled used
+    to sail into s1 at full qty -- 3 lots on the book, journal saying 2,
+    no HALT. Now the partial IS the position and s1 never submits."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    s0 = "tg-e-20260831-1030-spy-s0"
+    submits = []
+    with patch("loop.alpaca.get_order_by_client_id", return_value=None), \
+         patch("loop.alpaca.submit_mleg",
+               side_effect=lambda legs, limit_price, client_order_id, qty, dry_run, profile:
+                   (submits.append(client_order_id) or
+                    {"id": "o-s0", "status": "accepted", "filled_qty": "0", "client_order_id": s0})), \
+         patch("loop.alpaca.poll_until_filled",
+               return_value={"id": "o-s0", "status": "canceled", "filled_qty": "1",
+                             "filled_avg_price": "-0.61", "client_order_id": s0}), \
+         patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.time.sleep", lambda s: None):
+        result = loop._attempt_entry(PLAN, 2, "1030", "20260831", NOW, GOV, "submission", False, [])
+
+    assert submits == [s0], "s1 must never submit after a partial s0"
+    assert result["filled"] is True and result["stage"] == "s0"
+    fills = [e for e in loop._read_journal() if e["event"] == "entry_filled"]
+    assert len(fills) == 1
+    assert fills[0]["qty"] == 1 and fills[0]["requested_qty"] == 2 and fills[0]["partial"] is True
+    assert fills[0]["credit"] == 0.61  # the broker's actual fill price, not the quote
+    assert fills[0]["max_loss_dollars"] == pytest.approx((5 - 0.61) * 100 * 1)
+
+
+def test_leg_symmetry_catches_unbalanced_quantities(tmp_path, monkeypatch):
+    """2 short vs 1 long is one naked short contract. The old symbol-set
+    comparison called this symmetric."""
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    with patch("loop.alpaca.positions", return_value=[{"symbol": "S", "qty": "-2"}, {"symbol": "L", "qty": "1"}]):
+        assert loop._check_leg_symmetry("S", "L", "submission", "p1", context="test") is False
+    assert loop._check_halt()[0] is True
+    naked = [e for e in loop._read_journal() if e["event"] == "naked_leg_detected"]
+    assert naked[0]["short_qty"] == 2 and naked[0]["long_qty"] == 1
+    with patch("loop.alpaca.positions", return_value=[{"symbol": "S", "qty": "-2"}, {"symbol": "L", "qty": "2"}]):
+        assert loop._check_leg_symmetry("S", "L", "submission", "p1", context="test") is True
+
+
+def test_evaluate_halts_on_unbalanced_broker_legs(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    rec = {**ENTRY_REC, "qty": 2, "short_symbol": SHORT_C.symbol, "long_symbol": LONG_C.symbol}
+    option_positions = {SHORT_C.symbol: {"symbol": SHORT_C.symbol, "qty": "-2"},
+                        LONG_C.symbol: {"symbol": LONG_C.symbol, "qty": "1"}}
+    result = loop._evaluate_and_exit_position(rec, option_positions, FLAT_GOV, NOW, "submission", True, [], [])
+    assert result is None
+    events = [e["event"] for e in loop._read_journal()]
+    assert "exit_reconciliation_gap" in events
+    assert loop._check_halt()[0] is True
+
+
+def test_evaluate_warns_on_journal_broker_qty_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    rec = {**ENTRY_REC, "qty": 2, "short_symbol": SHORT_C.symbol, "long_symbol": LONG_C.symbol}
+    option_positions = {SHORT_C.symbol: {"symbol": SHORT_C.symbol, "qty": "-1"},
+                        LONG_C.symbol: {"symbol": LONG_C.symbol, "qty": "1"}}
+    with patch("loop._fresh_close_quotes", side_effect=loop.market.MarketDataError("no quotes in this test")):
+        loop._evaluate_and_exit_position(rec, option_positions, FLAT_GOV, NOW, "submission", True, [], [])
+    warn = [e for e in loop._read_journal() if e["event"] == "position_qty_mismatch"]
+    assert warn and warn[0]["journal_qty"] == 2 and warn[0]["broker_qty"] == 1
+    assert loop._check_halt()[0] is False
+
+
+def test_exit_s0_partial_journals_and_shrinks_s1(tmp_path, monkeypatch):
+    """1 of 2 closed under the canceled s0: the debit is journaled as
+    exit_partial_fill and s1 asks for exactly the remaining 1 -- never the
+    original 2 (over-close, broker response unverified)."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    rec = {**ENTRY_REC, "_close_qty": 2}
+    submits = []
+    def submit(legs, limit_price, client_order_id, qty, dry_run, profile):
+        submits.append((client_order_id, qty))
+        return {"id": f"o-{client_order_id}", "status": "accepted", "filled_qty": "0",
+                "client_order_id": client_order_id}
+    def poll(order_id, max_attempts, profile):
+        # s0 settles as a canceled partial (1 of 2, debit 0.31); s1 as a clean cancel
+        if order_id.endswith("s0"):
+            return {"id": order_id, "status": "canceled", "filled_qty": "1", "filled_avg_price": "0.31"}
+        return {"id": order_id, "status": "canceled", "filled_qty": "0"}
+    with patch("loop.alpaca.get_order_by_client_id", return_value=None), \
+         patch("loop.alpaca.submit_mleg", side_effect=submit), \
+         patch("loop.alpaca.poll_until_filled", side_effect=poll), \
+         patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.positions", return_value=[]), \
+         patch("loop.time.sleep", lambda s: None):
+        result = loop._attempt_exit(rec, "take_profit", SHORT_C, LONG_C, GOV, NOW, "submission", False, [], [])
+
+    assert [q for _, q in submits] == [2, 1], "s1 must ask for the remaining 1, not 2"
+    partial = [e for e in loop._read_journal() if e["event"] == "exit_partial_fill"]
+    assert len(partial) == 1 and partial[0]["qty"] == 1 and partial[0]["close_debit"] == 0.31
+    assert result["filled"] is False
+
+
+def test_exit_stale_partial_journals_and_defers_to_next_tick(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    rec = {**ENTRY_REC, "_close_qty": 2}
+    stale = "tg-x-20260831-1030-spy-s0"
+    with patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.poll_until_filled",
+               return_value={"id": "o-x", "status": "canceled", "filled_qty": "1", "filled_avg_price": "0.30"}), \
+         patch("loop.alpaca.submit_mleg", side_effect=AssertionError("must not submit this tick")), \
+         patch("loop.alpaca.get_order_by_client_id", side_effect=AssertionError("must not walk")), \
+         patch("loop.time.sleep", lambda s: None):
+        result = loop._attempt_exit(rec, "take_profit", SHORT_C, LONG_C, GOV, NOW, "submission", False, [],
+                                    [{"id": "o-x", "client_order_id": stale}])
+    assert result == {"filled": False, "partial": 1}
+    events = [e["event"] for e in loop._read_journal()]
+    assert events == ["exit_partial_fill"]
+
+
+def test_force_close_stale_partial_recounts_and_closes_the_rest(tmp_path, monkeypatch):
+    """Thursday cannot defer: a stale rung's partial is journaled, the
+    pair is recounted at the broker, and THIS rung submits the remainder."""
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop, "HALT_PATH", str(tmp_path / "HALT.json"))
+    with open(loop.GOVERNANCE_PATH, encoding="utf-8") as f:
+        gov = _json.load(f)
+    rec = {**ENTRY_REC, "_close_qty": 2}
+    stale = "tg-x-20260831-force09031430-spy-s0"
+    now = datetime(2026, 9, 3, 15, 1, tzinfo=ET)
+    submits = []
+    def submit(legs, limit_price, client_order_id, qty, dry_run, profile):
+        submits.append((client_order_id, qty))
+        return {"id": f"o-{client_order_id}", "status": "accepted", "filled_qty": "0",
+                "client_order_id": client_order_id}
+    with patch("loop.alpaca.cancel_order", return_value={}), \
+         patch("loop.alpaca.poll_until_filled",
+               return_value={"id": "o-1430", "status": "canceled", "filled_qty": "1", "filled_avg_price": "0.50"}), \
+         patch("loop.alpaca.positions",
+               return_value=[{"symbol": SHORT_C.symbol, "qty": "-1"}, {"symbol": LONG_C.symbol, "qty": "1"}]), \
+         patch("loop.alpaca.get_order_by_client_id", return_value=None), \
+         patch("loop.alpaca.submit_mleg", side_effect=submit), \
+         patch("loop.time.sleep", lambda s: None):
+        result = loop._attempt_force_close(rec, SHORT_C, LONG_C, gov, now, "submission", False,
+                                           [{"id": "o-1430", "client_order_id": stale}])
+    assert [q for _, q in submits] == [1], "the 15:00 rung must close the recounted 1, not 2"
+    partial = [e for e in loop._read_journal() if e["event"] == "exit_partial_fill"]
+    assert len(partial) == 1 and partial[0]["qty"] == 1
+    assert result["filled"] is False and result["rung"] == "force09031500"

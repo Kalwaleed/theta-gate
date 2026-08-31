@@ -318,14 +318,17 @@ def _build_positions(conn):
     than loop.py here -- divergence is the bug this design exists to
     prevent.
     """
-    entries, exits = {}, {}
+    entries, exits, partials = {}, {}, {}
     for row in conn.execute(
         "SELECT seq, ts, event, payload FROM events"
-        " WHERE event IN ('entry_filled','exit_filled') ORDER BY seq"
+        " WHERE event IN ('entry_filled','exit_filled','exit_partial_fill') ORDER BY seq"
     ):
         obj = json.loads(row["payload"])
         pid = obj.get("position_id")
         if not pid:
+            continue
+        if row["event"] == "exit_partial_fill":
+            partials.setdefault(pid, []).append(obj)
             continue
         (entries if row["event"] == "entry_filled" else exits)[pid] = (row["seq"], row["ts"], obj)
 
@@ -336,8 +339,17 @@ def _build_positions(conn):
         debit = x.get("close_debit")
         pnl = None
         if x and None not in (credit, debit, qty):
-            # Credit received minus debit paid to close, per contract, x100.
-            pnl = round((credit - debit) * 100 * qty, 2)
+            # X1 (31 Aug 2026): a close can happen in pieces. P&L is the
+            # full entry credit minus EVERY closing debit, each weighted by
+            # the qty that leg of the close actually filled. exit_filled's
+            # own qty falls back to the entry qty for pre-X1 rows, minus
+            # whatever the partials already covered.
+            partial_legs = [(p.get("close_debit"), p.get("qty")) for p in partials.get(pid, [])]
+            covered = sum(q for _, q in partial_legs if q)
+            final_qty = x.get("qty", max(qty - covered, 0))
+            legs = partial_legs + [(debit, final_qty)]
+            if all(d is not None and q is not None for d, q in legs):
+                pnl = round(credit * 100 * qty - sum(d * 100 * q for d, q in legs), 2)
         rows.append((
             pid, entry_seq, exit_seq,
             e.get("underlying"), e.get("direction"), e.get("trade_date"),

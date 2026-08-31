@@ -392,15 +392,22 @@ def _check_leg_symmetry(short_symbol, long_symbol, profile, position_id, context
     an automated single-leg close: alpaca.py has no single-leg order
     primitive, and building one untested, days before the deadline, is
     itself a real-money-shaped risk. A human closes it manually from the
-    CRITICAL journal entry. Returns True if symmetric (nothing to do)."""
+    CRITICAL journal entry. Returns True if symmetric (nothing to do).
+
+    X1 (31 Aug 2026): compares |qty| per leg, not symbol presence. At
+    qty 2, '2 short vs 1 long' is one naked short contract -- invisible
+    to the old symbol-set comparison, which saw both symbols present and
+    called it symmetric."""
     positions = alpaca.positions(profile=profile)
-    open_symbols = {p.get("symbol") for p in positions} & {short_symbol, long_symbol}
-    if open_symbols in (set(), {short_symbol, long_symbol}):
+    qtys = {p.get("symbol"): abs(int(float(p.get("qty", 0) or 0)))
+            for p in positions if p.get("symbol") in (short_symbol, long_symbol)}
+    short_q, long_q = qtys.get(short_symbol, 0), qtys.get(long_symbol, 0)
+    if short_q == long_q:
         return True
-    _trigger_halt(f"naked leg after {context}: {position_id} has only {sorted(open_symbols)} open")
+    _trigger_halt(f"naked leg after {context}: {position_id} shows {short_q} short vs {long_q} long")
     _append_journal("naked_leg_detected", level="critical", position_id=position_id, context=context,
-                     open_symbols=sorted(open_symbols),
-                     note="one leg of a vertical is open alone -- HALT set, needs human close")
+                     short_qty=short_q, long_qty=long_q,
+                     note="a vertical's legs are unbalanced -- naked contracts. HALT set, needs human close")
     return False
 
 
@@ -529,6 +536,28 @@ def _extract_actual_price(order, fallback):
         return fallback
 
 
+def _filled_qty(order, fallback):
+    """X1 (qty 2, 31 Aug 2026): the broker's top-level filled_qty is a
+    string and survives on canceled orders, so a canceled partial reports
+    e.g. status 'canceled', filled_qty '1'. Returns the parsed count, or
+    `fallback` when the field is missing/unparseable or reads 0 on an
+    order the caller already knows filled (trust the status over a
+    contradictory count)."""
+    try:
+        parsed = int(float(order.get("filled_qty")))
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _broker_paired_qty(short_symbol, long_symbol, profile):
+    """How many complete spreads the broker actually shows: the smaller
+    |qty| of the two legs. 0 when either leg is gone."""
+    positions = alpaca.positions(profile=profile)
+    qtys = {p.get("symbol"): abs(int(float(p.get("qty", 0) or 0))) for p in positions}
+    return min(qtys.get(short_symbol, 0), qtys.get(long_symbol, 0))
+
+
 # ---------------------------------------------------------------------------
 # Fresh quotes for an already-open position (for cost_to_close).
 # ---------------------------------------------------------------------------
@@ -614,9 +643,11 @@ def _force_rung_tag(now, at_et):
 def _journal_exit_fill(order, position_id, underlying, reason, qty, submitted_price,
                         short_symbol, long_symbol, profile):
     actual_debit = _extract_actual_price(order, submitted_price)
+    filled = _filled_qty(order, qty)
     still_open = not _confirm_flat([short_symbol, long_symbol], profile)
     _append_journal(
-        "exit_filled", position_id=position_id, underlying=underlying, reason=reason, qty=qty,
+        "exit_filled", position_id=position_id, underlying=underlying, reason=reason,
+        qty=filled, requested_qty=qty,
         close_debit=actual_debit, order_id=order.get("id"), client_order_id=order.get("client_order_id"),
         legs_confirmed_closed=not still_open,
     )
@@ -677,6 +708,15 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
                 _journal_exit_fill(canceled, position_id, underlying, reason, qty, mid_debit,
                                     short_c.symbol, long_c.symbol, profile)
                 return {"filled": True, "order_id": o.get("id"), "raced_stale_fill": True}
+            stale_partial = _filled_qty(canceled, 0)
+            if stale_partial > 0:
+                # X1: part of the position closed under the stale order.
+                # Journal the debit (store sums it into P&L) and stop --
+                # the next tick recounts the remaining pair from the broker.
+                _append_journal("exit_partial_fill", position_id=position_id, client_order_id=coid,
+                                 reason=reason, qty=stale_partial,
+                                 close_debit=_extract_actual_price(canceled, mid_debit), dry_run=dry_run)
+                return {"filled": False, "partial": stale_partial}
             if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
                     short_c.symbol, long_c.symbol, profile, position_id, context="exit_stale_cancel"):
                 _append_journal("exit_stale_unresolved", level="critical", position_id=position_id,
@@ -710,6 +750,17 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
             _journal_exit_fill(order, position_id, underlying, reason, qty, mid_debit,
                                 short_c.symbol, long_c.symbol, profile)
             return {"filled": True, "order_id": order.get("id"), "raced_cancel": True}
+        s0_partial = _filled_qty(order, 0)
+        if s0_partial > 0:
+            # X1: journal the partial debit and shrink s1 to what is left.
+            # Resubmitting the full qty over-closes -- the broker's answer
+            # to that is unverified, so never ask the question.
+            _append_journal("exit_partial_fill", position_id=position_id, client_order_id=cid0,
+                             reason=reason, qty=s0_partial,
+                             close_debit=_extract_actual_price(order, mid_debit), dry_run=dry_run)
+            qty -= s0_partial
+            if qty < 1:
+                return {"filled": False, "partial": s0_partial}  # next tick recounts from the broker
         _check_leg_symmetry(short_c.symbol, long_c.symbol, profile, position_id, context=f"exit_cancel:{reason}:s0")
 
     stage1_price = max(mid_debit, min(round(mid_debit + EXIT_CONCESSION_DOLLARS, 2), natural_debit))
@@ -736,6 +787,14 @@ def _attempt_exit(entry_rec, reason, short_c, long_c, gov, now, profile, dry_run
             _journal_exit_fill(order, position_id, underlying, reason, qty, stage1_price,
                                 short_c.symbol, long_c.symbol, profile)
             return {"filled": True, "order_id": order.get("id"), "raced_cancel": True}
+        s1_partial = _filled_qty(order, 0)
+        if s1_partial > 0:
+            # X1: last stage of this attempt -- journal the partial debit
+            # and let the next tick recount the remaining pair.
+            _append_journal("exit_partial_fill", position_id=position_id, client_order_id=cid1,
+                             reason=reason, qty=s1_partial,
+                             close_debit=_extract_actual_price(order, stage1_price), dry_run=dry_run)
+            return {"filled": False, "partial": s1_partial}
         _check_leg_symmetry(short_c.symbol, long_c.symbol, profile, position_id, context=f"exit_cancel:{reason}:s1")
     _append_journal("exit_unfilled", position_id=position_id, client_order_id=cid1, reason=reason, rung=rung)
     return {"filled": False}
@@ -797,6 +856,22 @@ def _attempt_force_close(entry_rec, short_c, long_c, gov, now, profile, dry_run,
                     _journal_exit_fill(canceled, position_id, underlying, "force_close", qty, mid_debit,
                                         short_c.symbol, long_c.symbol, profile)
                     return {"filled": True, "rung": rung_tag, "order_id": o.get("id"), "raced_stale_fill": True}
+                stale_partial = _filled_qty(canceled, 0)
+                if stale_partial > 0:
+                    # X1: an earlier rung's order partially filled. Journal
+                    # the debit, then RECOUNT the pair from the broker --
+                    # this rung must close what remains, not the step-4
+                    # snapshot's count. The ladder must keep moving: on
+                    # Thursday afternoon there is no next-tick to defer to.
+                    _append_journal("exit_partial_fill", position_id=position_id, client_order_id=coid,
+                                     reason="force_close", qty=stale_partial,
+                                     close_debit=_extract_actual_price(canceled, mid_debit), dry_run=dry_run)
+                    qty = _broker_paired_qty(short_c.symbol, long_c.symbol, profile)
+                    if qty < 1:
+                        # nothing left paired: the partial(s) covered it all
+                        return {"filled": True, "rung": rung_tag, "order_id": o.get("id"),
+                                "raced_stale_fill": True, "partial_pieces": True}
+                    continue
                 if not _stale_cancel_settled(canceled) or not _check_leg_symmetry(
                         short_c.symbol, long_c.symbol, profile, position_id, context="force_stale_cancel"):
                     _append_journal("force_close_stale_unresolved", level="critical", position_id=position_id,
@@ -850,9 +925,27 @@ def _evaluate_and_exit_position(entry_rec, option_positions, gov, now, profile, 
                               "leg -- naked exposure. HALT set; needs human close.")
         return None
 
-    qty_to_close = min(abs(int(float(short_pos.get("qty", 0) or 0))), abs(int(float(long_pos.get("qty", 0) or 0))))
+    short_q = abs(int(float(short_pos.get("qty", 0) or 0)))
+    long_q = abs(int(float(long_pos.get("qty", 0) or 0)))
+    if short_q != long_q:
+        # X1: both symbols present but counts differ -- e.g. 2 short vs 1
+        # long after a one-legged partial event. Naked contracts; same
+        # severity as a missing leg.
+        _trigger_halt(f"unbalanced legs: {position_id} shows {short_q} short vs {long_q} long at the broker")
+        _append_journal("exit_reconciliation_gap", level="critical", position_id=position_id,
+                         short_qty=short_q, long_qty=long_q,
+                         note="leg quantities differ at the broker -- naked contracts. HALT set; needs human close.")
+        return None
+    qty_to_close = short_q
     if qty_to_close < 1:
         return None
+    if qty_to_close != entry_rec.get("qty"):
+        # Informational: the broker's paired count drives every close (the
+        # journal's entry qty is never resubmitted blind), so a mismatch is
+        # a data question for a human, not a trading decision.
+        _append_journal("position_qty_mismatch", level="warning", position_id=position_id,
+                         journal_qty=entry_rec.get("qty"), broker_qty=qty_to_close,
+                         note="journal entry qty differs from the broker's paired count; closes use the broker count")
 
     try:
         short_c, long_c = _fresh_close_quotes(entry_rec["underlying"], entry_rec["expiry"], short_sym, long_sym, profile)
@@ -882,13 +975,19 @@ def _evaluate_and_exit_position(entry_rec, option_positions, gov, now, profile, 
 
 def _journal_entry_fill(order, candidate, qty, window_label, trade_date, underlying, stage,
                          latency_seconds, submitted_credit):
+    """X1 (31 Aug 2026): `qty` is the REQUESTED quantity; the journaled qty
+    is what the broker says actually filled, so max_loss and every
+    downstream reader (exits, gates, store P&L) see the real position. A
+    partial fill IS the position -- the ladder never tops it up."""
     actual_credit = -_extract_actual_price(order, -submitted_credit)
-    max_loss_dollars = round((candidate.width - actual_credit) * 100 * qty, 2)
+    filled = _filled_qty(order, qty)
+    max_loss_dollars = round((candidate.width - actual_credit) * 100 * filled, 2)
     _append_journal(
         "entry_filled", position_id=_position_id(trade_date, window_label, underlying),
         underlying=underlying, direction=candidate.direction, trade_date=trade_date, window=window_label,
         expiry=candidate.expiry, short_symbol=candidate.short.symbol, long_symbol=candidate.long.symbol,
-        width=candidate.width, qty=qty, credit=actual_credit, max_loss_dollars=max_loss_dollars,
+        width=candidate.width, qty=filled, requested_qty=qty, partial=filled < qty,
+        credit=actual_credit, max_loss_dollars=max_loss_dollars,
         order_id=order.get("id"), client_order_id=order.get("client_order_id"), stage=stage,
         latency_seconds=latency_seconds,
     )
@@ -918,7 +1017,10 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
         coid = str(o.get("client_order_id") or "")
         if coid.startswith(stale_prefix) and f"-{underlying.lower()}-" in coid and o.get("id"):
             canceled = _cancel_and_confirm(o["id"], profile, gov, dry_run)
-            if canceled.get("status") == "filled":
+            if canceled.get("status") == "filled" or _filled_qty(canceled, 0) > 0:
+                # Full fill, or a canceled partial (status 'canceled',
+                # filled_qty > 0). Either way real contracts exist: journal
+                # them as THE position and end the attempt -- no top-up.
                 stage = coid.rsplit("-", 1)[-1]
                 _journal_entry_fill(canceled, candidate, qty, window_label, trade_date, underlying, stage,
                                      time.monotonic() - started, candidate.credit)
@@ -958,7 +1060,10 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
         # A cancel never wins a race against a fill already in flight --
         # must check what actually happened, not assume the cancel worked.
         order = _cancel_and_confirm(order["id"], profile, gov, dry_run)
-        if order.get("status") == "filled":
+        if order.get("status") == "filled" or _filled_qty(order, 0) > 0:
+            # X1 / F18: a canceled s0 with a partial fill IS the position.
+            # The ladder STOPS here -- submitting s1 at full qty on top was
+            # the 3-lots-no-HALT bug the 30 Aug audit found.
             _journal_entry_fill(order, candidate, qty, window_label, trade_date, underlying, "s0",
                                  time.monotonic() - started, candidate.credit)
             return {"filled": True, "stage": "s0", "order_id": order.get("id"), "raced_cancel": True}
@@ -993,7 +1098,8 @@ def _attempt_entry(candidate, qty, window_label, trade_date, now, gov, profile, 
 
     if order.get("id"):
         order = _cancel_and_confirm(order["id"], profile, gov, dry_run)
-        if order.get("status") == "filled":
+        if order.get("status") == "filled" or _filled_qty(order, 0) > 0:
+            # Same X1 rule as s0: a canceled partial is the position.
             _journal_entry_fill(order, candidate, qty, window_label, trade_date, underlying, "s1",
                                  time.monotonic() - started, s1_price)
             return {"filled": True, "stage": "s1", "order_id": order.get("id"), "raced_cancel": True}

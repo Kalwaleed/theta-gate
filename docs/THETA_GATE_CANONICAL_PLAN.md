@@ -85,7 +85,7 @@ Every material claim belongs to one of four classes:
 9. **Journal timing.** A single pre-fill row cannot contain later fill and exit fields. V1 uses append-only lifecycle events, with the order intent flushed before the broker call and later observations appended.
 10. **Durable state and Git workflow.** Local files and Git commits are not execution state on an ephemeral runner. A minimal Postgres control ledger stores account-global leases, window claims, HALT, session baselines, order intents, and append-only events. Push/rebase is removed from the trading loop; an isolated publisher reads a sanitized database view and cannot trigger resubmission.
 11. **Call spreads.** Call spreads add a second surface, a second directional branch, and unvalidated switching logic. V1 is put-credit-only. A bearish model result means `NO_TRADE`.
-12. **Sizing.** V1 trades exactly one contract per spread for the entire hackathon, not only the first trade. This removes false precision from a sample too small to justify scaling.
+12. **Sizing.** V1 trades a fixed governance quantity per spread — never computed from a max-loss budget. *Amended 31 Aug 2026 (PK decision, X1 in docs/ANALYSIS-2026-08-30.md rank 16):* 1 → 2 contracts, landed together with partial-fill handling on every order path (a partial fill IS the position; no top-up, no unwind). The original one-contract rationale (no false precision from a 5-session sample) still argues against any further scaling; qty 3 is arithmetically vetoed by the $1,000 per-trade cap.
 13. **Quote freshness.** The source threshold of 600 seconds is reduced to 60 seconds and becomes enforceable because quote timestamps are added to the contract model.
 14. **Deadline execution.** The final flatten starts at 14:30 ET and reaches its forceful rung by 15:30 ET, leaving recovery time before the close. The source plan's first market attempt at 15:50 ET was too late.
 15. **Track A priority.** The upstream options-spreads skill is useful but nonblocking. It begins only after the core loop, recovery, workflow, dashboard, activation evidence, and submission assets are working.
@@ -1561,7 +1561,7 @@ Conflict flags:
 - Gates 0 and A–E have dated evidence.
 - While `EXACT_FLAT`, PK records that default-branch dispatcher/watchdog hashes equal the active manifest, enables the no-bypass `theta-gate-control-freeze` ruleset, and live-probes rejection of unauthorized update, deletion, and force push before entry is enabled.
 - The descriptor's exact retained tag, policy/schema hashes, and six recovery-critical credential version/fingerprint pairs match the isolated environments; their rotation is locked until `EXACT_FLAT` and requalification.
-- The first and every later V1 spread remains one contract.
+- The first and every later V1 spread uses the fixed governance quantity (1 through 31 Aug; 2 from 1 Sep — Sec 2.12 amendment).
 - No human places an order in the submission account.
 
 ### Rollback

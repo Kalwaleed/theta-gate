@@ -594,3 +594,33 @@ def test_a_real_gate_veto_is_never_treated_as_noise(journal, db):
            "reason": "all_underlyings_at_cap"})
     conn = store.rebuild(db, str(journal))
     assert len(store.decision_log(conn)) == 2
+
+
+def test_realised_pnl_sums_partial_exit_debits(journal, db):
+    """X1 (31 Aug 2026): a qty-2 position can close in pieces. Entry credit
+    0.60 x 2; one contract closed at 0.31 via exit_partial_fill, the last
+    at 0.29 via exit_filled -> pnl = 120 - 31 - 29 = +$60. Ignoring the
+    partial's debit would overstate P&L by $31."""
+    write(journal,
+          entry("tg-e-20260901-1030-spy", "SPY", "2026-09-01T10:31:00-04:00", credit=0.60, qty=2),
+          {"ts": "2026-09-02T11:00:00-04:00", "event": "exit_partial_fill",
+           "position_id": "tg-e-20260901-1030-spy", "reason": "take_profit",
+           "qty": 1, "close_debit": 0.31, "client_order_id": "tg-x-20260901-1030-spy-s0"},
+          exit_("tg-e-20260901-1030-spy", "SPY", "2026-09-02T11:10:00-04:00", debit=0.29, qty=1))
+
+    conn = store.rebuild(db, str(journal))
+    row = conn.execute("SELECT * FROM positions").fetchone()
+    assert row["status"] == "closed"
+    assert row["realised_pnl_dollars"] == pytest.approx(0.60 * 200 - 31.0 - 29.0)
+
+
+def test_pre_x1_rows_without_exit_qty_still_compute_pnl(journal, db):
+    """Backward compatibility: the open 31 Aug qty-1 position's eventual
+    exit_filled may carry no qty field in older fixtures -- the entry qty
+    is the fallback."""
+    write(journal,
+          entry("tg-e-20260831-1030-spy", "SPY", "2026-08-31T10:31:00-04:00", credit=0.61, qty=1),
+          {k: v for k, v in exit_("tg-e-20260831-1030-spy", "SPY",
+                                   "2026-09-03T14:35:00-04:00", debit=0.50).items() if k != "qty"})
+    conn = store.rebuild(db, str(journal))
+    assert conn.execute("SELECT realised_pnl_dollars FROM positions").fetchone()[0] == pytest.approx(11.0)

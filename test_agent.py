@@ -4,6 +4,7 @@ live on 26 Aug 2026, the same chain that produced the real fill proving the
 mleg body shape. See docs in the plan for the probe.
 """
 
+import json
 import math
 import statistics
 import subprocess
@@ -26,7 +27,7 @@ GOV = {
         "width_dollars": 5, "dte_min": 6, "dte_max": 9,
         "short_delta_min": 0.16, "short_delta_max": 0.25,
         "credit_quality_expected_ratio": 0.8, "credit_quality_max_deviation": 0.40,
-        "min_credit_pct_of_width": 0.10, "fixed_quantity": 1,
+        "min_credit_pct_of_width": 0.10, "fixed_quantity": 2,
     },
     "entry": {
         "windows_et": ["10:30", "13:30"], "max_new_entries_per_session": 2,
@@ -224,18 +225,28 @@ def test_client_order_id_deterministic():
 # ---------------------------------------------------------------------------
 
 def test_fixed_quantity_sizing():
-    """Canonical plan Sec 2.12: exactly one contract, always — not computed
-    from a max-loss budget. gate_max_loss_per_trade independently rejects
-    any hand-built qty that would breach the cap regardless of what
-    size_position returned, so a qty of 3 must still be rejected."""
+    """X1 (31 Aug 2026): two contracts, fixed — never computed from a
+    max-loss budget. At ~$439/contract, qty 2 ($878) sits under the $1,000
+    per-trade cap and qty 3 ($1,317) breaches it, so
+    gate_max_loss_per_trade independently rejects any hand-built qty 3
+    regardless of what size_position returned."""
     plan = real_plan()
     qty = risk.size_position(plan, GOV)
-    assert qty == 1
+    assert qty == 2
 
-    state = base_state()
-    reason = risk.gate_max_loss_per_trade(state, plan, GOV, NOW, qty=3)
+    assert risk.gate_max_loss_per_trade(base_state(), plan, GOV, NOW, qty=2) is None
+    reason = risk.gate_max_loss_per_trade(base_state(), plan, GOV, NOW, qty=3)
     assert reason is not None
     assert "max_loss_per_trade" in reason
+
+
+def test_fixture_quantity_matches_governance_file():
+    """GOV parity: this file's fixture and the real governance.json must
+    agree on the fixed quantity, or the suite tests a strategy the agent
+    does not run."""
+    with open("governance.json", encoding="utf-8") as f:
+        real = json.load(f)
+    assert real["strategy"]["fixed_quantity"] == GOV["strategy"]["fixed_quantity"] == 2
 
 
 def test_size_position_returns_zero_when_even_one_contract_breaches_cap():
@@ -425,7 +436,7 @@ def test_check_all_passes_the_real_trade_end_to_end():
     plan = real_plan()
     reason, qty = risk.check_all(base_state(), plan, GOV, NOW)
     assert reason is None
-    assert qty == 1
+    assert qty == 2  # X1, 31 Aug 2026
 
 
 # ---------------------------------------------------------------------------

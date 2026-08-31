@@ -517,6 +517,7 @@ def main():
             rows.append([
                 f'<b>{esc(p["underlying"])}</b><div class="tg-sym">{esc(p["direction"] or "")}</div>',
                 f'{esc(short_ts(p["entry_ts"]))}<div class="tg-sym">exp {esc(p["expiry"] or "--")}</div>',
+                f'<span class="tg-num">{esc(str(p["qty"] if p["qty"] is not None else "--"))}</span>',
                 f'<span class="tg-num">{money(p["credit"])}</span>',
                 f'<span class="tg-num">{money(p["close_debit"])}</span>',
                 f'<span class="tg-num">{money(p["max_loss_dollars"])}</span>',
@@ -524,7 +525,7 @@ def main():
                 f'<span class="tg-num {cls}">{money(pnl, signed=True)}</span>',
             ])
         st.markdown(render_rows(
-            ["Underlying", "Entered", "Credit", "Close debit", "Max loss", "State", "P&L"],
+            ["Underlying", "Entered", "Qty", "Credit", "Close debit", "Max loss", "State", "P&L"],
             rows), unsafe_allow_html=True)
     else:
         empty("No positions yet",
