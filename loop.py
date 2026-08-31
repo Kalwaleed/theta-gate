@@ -1244,6 +1244,12 @@ def main():
                               "reads, real HALT triggers, and a real call to Anthropic via brain.propose")
     parser.add_argument("--profile", default="submission",
                          help="Alpaca CLI profile to trade against (default: submission)")
+    parser.add_argument("--as-of", metavar="ISO8601",
+                         help="REHEARSAL ONLY. Run the tick as though `now` were this instant, so a "
+                              "date-triggered path can be exercised before its date arrives -- chiefly "
+                              "Thursday's force-close ladder, which is mandatory and has never executed. "
+                              "Requires --dry-run, refuses to run inside GitHub Actions, writes to a "
+                              "throwaway journal instead of data/journal.jsonl, and never git-publishes.")
     parser.add_argument("--local-live", action="store_true",
                          help="allow a NON-dry-run tick outside GitHub Actions. Off by default: a local live "
                               "tick overlapping the runner's tick cancels the runner's working order mid-ladder "
@@ -1255,6 +1261,39 @@ def main():
                          "only while the cron is halted (data/HALT.json active) or the market is closed")
 
     now = datetime.now(ET)
+    if args.as_of:
+        # Three guards, because a clock the operator controls is exactly the
+        # kind of switch that ends up left on. Each closes a different way
+        # this could corrupt something real.
+        #
+        # 1. Never live. A fabricated `now` picks the force-close rung and
+        #    the client_order_id date tag; submitting against it could place
+        #    a Thursday-tagged order on a Monday.
+        if not args.dry_run:
+            raise SystemExit("--as-of requires --dry-run: a simulated clock must never reach a broker write")
+        # 2. Never in CI. The runner's clock is the real one, and a
+        #    scheduled tick running as some other day is indistinguishable
+        #    from a genuine one in the run log.
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            raise SystemExit("--as-of is a local rehearsal tool and must not run in GitHub Actions")
+        try:
+            now = datetime.fromisoformat(args.as_of)
+        except ValueError:
+            raise SystemExit(f"--as-of: could not parse {args.as_of!r} as ISO 8601")
+        now = now.replace(tzinfo=ET) if now.tzinfo is None else now.astimezone(ET)
+
+        # 3. Never the real journal. --dry-run still journals for real, so a
+        #    rehearsal would otherwise append exit_intent rows stamped with a
+        #    fabricated Thursday into data/journal.jsonl -- the append-only
+        #    audit trail that judges read and that _open_positions derives
+        #    state from. Redirect it, and do not publish.
+        stamp = datetime.now(ET).strftime("%Y%m%dT%H%M%S")
+        globals()["JOURNAL_PATH"] = f"data/rehearsal-{stamp}.jsonl"
+        globals()["_git_publish"] = lambda _now: {"committed": False, "pushed": False,
+                                                  "skipped": "rehearsal"}
+        print(f"REHEARSAL  as-of={now.isoformat()}  journal={JOURNAL_PATH}  "
+              f"(dry-run, no git publish, real journal untouched)")
+
     summary = run_tick(now=now, dry_run=args.dry_run, profile=args.profile)
     print(json.dumps(summary, indent=2, default=str))
     if not summary.get("ok", False):
