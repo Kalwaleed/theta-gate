@@ -808,23 +808,37 @@ def size_gov():
     return _j.load(open("governance.json"))
 
 
-@pytest.mark.parametrize("confidence,expected", [
-    (None, 1), (0.0, 1), (0.4, 1), (0.5, 1), (0.6, 1), (0.62, 1),
-    (0.74, 1), (0.75, 2), (0.9, 2), (1.0, 2),
-])
-def test_confidence_maps_to_contracts(confidence, expected, size_gov):
-    assert risk.size_position(_sized_plan(), size_gov, confidence) == expected
+def test_sizing_is_monotonic_in_confidence(size_gov):
+    """More conviction never buys fewer contracts. Asserted as a shape
+    rather than a table of magic numbers, so raising max_contracts (2 -> 15
+    on 31 Aug) does not invalidate the test that guards it."""
+    plan = _sized_plan()
+    sizes = [risk.size_position(plan, size_gov, c / 100) for c in range(0, 101)]
+    assert sizes == sorted(sizes), "size must never decrease as confidence rises"
 
 
-def test_the_step_up_is_not_fitted_to_observed_output(size_gov):
+def test_sizing_stays_inside_the_governance_band(size_gov):
+    plan = _sized_plan()
+    lo, hi = size_gov["strategy"]["min_contracts"], size_gov["strategy"]["max_contracts"]
+    for c in (-5.0, 0.0, 0.3, 0.5, 0.62, 0.8, 1.0, 1.5, 99.0, float("inf")):
+        assert lo <= risk.size_position(plan, size_gov, c) <= hi, f"confidence {c} escaped the band"
+
+
+def test_no_confidence_and_fixed_mode_both_fall_back_to_one(size_gov):
+    """A proposal without confidence must not silently get max size."""
+    assert risk.size_position(_sized_plan(), size_gov, None) == size_gov["strategy"]["min_contracts"]
+
+
+def test_the_confidence_scale_is_the_models_own_not_fitted_to_output(size_gov):
     """Every confidence the model has produced is 0.60-0.62 (four
-    proposals, 31 Aug). The threshold sits at 0.75 on the model's own
-    [0,1] scale, so those do NOT size up. Anchoring near 0.6 would tune it
-    to four data points -- the exact criticism levelled at the VRP
-    re-base, and it would apply here too.
+    proposals, 31 Aug). The band is [0.5, 1.0] -- the model's own scale --
+    so those land mid-range by arithmetic rather than by tuning. Anchoring
+    the floor near 0.6 would fit the threshold to four data points, which
+    is the criticism levelled at the VRP re-base and would apply here too.
     """
-    for observed in (0.60, 0.60, 0.60, 0.62):
-        assert risk.size_position(_sized_plan(), size_gov, observed) == 1
+    s = size_gov["strategy"]
+    assert (s["confidence_floor"], s["confidence_ceiling"]) == (0.5, 1.0), (
+        "the band moved -- if that was to make observed confidences size up, it is fitting")
 
 
 def test_the_model_cannot_exceed_the_governance_ceiling(size_gov):
@@ -889,3 +903,109 @@ def test_the_sized_gates_still_veto_a_confident_oversize(size_gov):
     }
     reason, qty = risk.check_all(state, plan, size_gov, NOW, 1.0)
     assert reason is not None and qty == 0, "a confident proposal must still hit the exposure gates"
+
+
+# ---------------------------------------------------------------------------
+# governance.json coherence — the real file, not a fixture
+# ---------------------------------------------------------------------------
+#
+# Every gate test above runs against the inline GOV fixture, so the file the
+# agent actually trades on was validated by nothing. Two live incoherences
+# got through that way and both were found by hand:
+#
+#   max_concurrent_positions = 3 with 2 underlyings x 1 per underlying
+#     -> arithmetically unreachable, the cap was decoration
+#   daily_drawdown_halt_pct = -1% at 1 contract
+#     -> worst case $878 < $1,000, the halt could never fire
+#
+# A limit that cannot bind is worse than no limit: it reads as protection
+# in the write-up and provides none.
+
+@pytest.fixture
+def real_gov():
+    import json as _j
+    return _j.load(open("governance.json"))
+
+
+def _worst_case(gov, credit=0.61):
+    """Every position at max contracts, all losing simultaneously."""
+    per_contract = (gov["strategy"]["width_dollars"] - credit) * 100
+    qty = gov["strategy"].get("max_contracts", gov["strategy"]["fixed_quantity"])
+    return per_contract * qty * gov["risk"]["max_concurrent_positions"], per_contract * qty
+
+
+def test_the_concurrent_cap_is_actually_reachable(real_gov):
+    """min(cap, underlyings x per_underlying). If the right side is smaller
+    the cap never binds and the real limit is somewhere else."""
+    cap = real_gov["risk"]["max_concurrent_positions"]
+    reachable = len(real_gov["strategy"]["underlyings"]) * real_gov["risk"]["max_positions_per_underlying"]
+    assert reachable >= cap, (
+        f"max_concurrent_positions={cap} is unreachable: {len(real_gov['strategy']['underlyings'])} "
+        f"underlyings x {real_gov['risk']['max_positions_per_underlying']} per underlying = {reachable}")
+
+
+def test_the_session_entry_cap_does_not_strand_the_concurrent_cap(real_gov):
+    """Opening N concurrent positions needs at least N entries allowed in
+    a session, or the cap can only ever be reached across days."""
+    assert real_gov["entry"]["max_new_entries_per_session"] >= real_gov["risk"]["max_concurrent_positions"]
+
+
+def test_the_daily_drawdown_halt_can_fire(real_gov):
+    """At 1 contract the worst case was $878 against a $1,000 halt, so the
+    whole drawdown layer was decorative. A halt that cannot trigger is not
+    a risk control."""
+    worst, _ = _worst_case(real_gov)
+    halt = abs(real_gov["risk"]["daily_drawdown_halt_pct"]) * real_gov["risk"]["starting_equity_dollars"]
+    assert halt < worst, f"daily halt ${halt:,.0f} exceeds worst case ${worst:,.0f} -- it can never fire"
+
+
+def test_the_cumulative_halt_fires_before_the_worst_case_completes(real_gov):
+    worst, _ = _worst_case(real_gov)
+    start = real_gov["risk"]["starting_equity_dollars"]
+    drop_to_halt = start - real_gov["risk"]["cumulative_drawdown_halt_equity_dollars"]
+    assert drop_to_halt < worst, (
+        f"cumulative halt needs a ${drop_to_halt:,.0f} loss but the worst case is ${worst:,.0f}")
+
+
+def test_max_contracts_is_permitted_by_the_per_trade_cap(real_gov):
+    """If max_contracts breaches gate_max_loss_per_trade, sizing silently
+    shrinks and max_contracts is a number that never happens."""
+    _, per_position = _worst_case(real_gov)
+    assert per_position <= real_gov["risk"]["max_loss_per_trade_dollars"], (
+        f"max_contracts costs ${per_position:,.0f} but the per-trade cap is "
+        f"${real_gov['risk']['max_loss_per_trade_dollars']:,}")
+
+
+def test_full_exposure_fits_inside_the_open_risk_cap(real_gov):
+    worst, _ = _worst_case(real_gov)
+    assert worst <= real_gov["risk"]["max_total_open_risk_dollars"], (
+        f"worst case ${worst:,.0f} exceeds max_total_open_risk "
+        f"${real_gov['risk']['max_total_open_risk_dollars']:,}")
+
+
+def test_full_exposure_leaves_the_buying_power_floor_intact(real_gov):
+    """Margin is width x 100 x qty (verified live 26 Aug -- NOT max loss).
+    Post-trade buying power must clear the absolute floor and the 5x
+    multiple, or the last position can never be opened."""
+    s, r = real_gov["strategy"], real_gov["risk"]
+    qty = s.get("max_contracts", s["fixed_quantity"])
+    margin = s["width_dollars"] * 100 * qty * r["max_concurrent_positions"]
+    remaining = r["starting_equity_dollars"] - margin
+    _, per_position = _worst_case(real_gov)
+    assert remaining >= r["options_buying_power_floor_dollars"], (
+        f"${margin:,.0f} margin leaves ${remaining:,.0f}, below the "
+        f"${r['options_buying_power_floor_dollars']:,} floor")
+    assert remaining >= r["options_buying_power_floor_multiple_of_max_loss"] * per_position
+
+
+def test_the_confidence_band_spans_the_contract_range(real_gov):
+    """min and max contracts must both be reachable from a confidence in
+    [0,1], or one end of the band is unusable."""
+    s = real_gov["strategy"]
+    if s.get("sizing_mode") != "confidence":
+        pytest.skip("fixed sizing")
+    import json as _j
+    plan = _sized_plan()
+    sizes = {risk.size_position(plan, real_gov, c / 100) for c in range(0, 101)}
+    assert min(sizes) == s["min_contracts"], f"min_contracts unreachable; got {min(sizes)}"
+    assert max(sizes) == s["max_contracts"], f"max_contracts unreachable; got {max(sizes)}"

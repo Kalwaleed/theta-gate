@@ -20,11 +20,11 @@
     "min_credit_pct_of_width": 0.1,
     "_fixed_quantity_comment": "Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the entire hackathon, not just the first trade. A 5-session sample cannot justify scaling; size_position() no longer computes qty from a max-loss budget.",
     "fixed_quantity": 1,
-    "_sizing_comment": "PK decision, 31 Aug 2026: size scales with the proposer's stated confidence instead of being pinned at one contract. The LLM does NOT size the position -- it supplies one input to a deterministic function whose bounds it cannot influence, and every existing gate still vetoes independently. max_contracts is 2 and not higher because gate_max_loss_per_trade ($1,000) already refuses a third contract at ~$439 max loss each; raising THAT is the real risk decision and was not taken. A useful side effect: at 1 contract the worst case across both positions is $878, below the $1,000 daily-drawdown halt, so that gate was mathematically unreachable. At 2 it can actually fire.",
+    "_sizing_comment": "PK decision, 31 Aug 2026: size scales with the proposer's stated confidence between min_contracts and max_contracts. The LLM does NOT size the position -- it supplies one input to a deterministic function whose bounds live in this file, which no LLM can write to, and gate_max_loss_per_trade / gate_total_open_risk / gate_buying_power_floor all veto the result independently. max_contracts 2 -> 15: at 2 the whole book committed $2,000 of $100,000 and a perfect remaining week returned ~0.12%, a rounding error on a judged criterion.",
     "_sizing_threshold_comment": "confidence_floor/ceiling are the model's own [0,1] scale, NOT fitted to observed output. Every confidence seen so far is 0.60-0.62 (four proposals, 31 Aug), so a threshold placed near 0.6 would be tuned to four data points -- the exact criticism levelled at the VRP re-base. Effective step-up is at 0.75, which those proposals do NOT reach: the mechanism is live but inert until the model expresses genuine conviction. Deliberate.",
     "sizing_mode": "confidence",
     "min_contracts": 1,
-    "max_contracts": 2,
+    "max_contracts": 15,
     "confidence_floor": 0.5,
     "confidence_ceiling": 1.0
   },
@@ -33,7 +33,7 @@
       "10:30",
       "13:30"
     ],
-    "max_new_entries_per_session": 2,
+    "max_new_entries_per_session": 3,
     "no_entries_after_date": "2026-09-02",
     "no_entries_after_time_et": "10:45",
     "_deadline_comment": "Canonical plan Sec 4.3, 29 Aug 2026: Wednesday is morning-only (the afternoon window is dropped \u2014 a spread needs enough runway before Thursday's flatten to cover its own bid-ask round trip). This value previously read 16:00, which wrongly left the Wednesday afternoon window open. Sep 4 is NFP day, 08:30 ET, verified against bls.gov this session (data/events_2026-08-31_2026-09-04.json) and falls after Thursday's flatten, so it does not block any entry.",
@@ -67,18 +67,19 @@
     ]
   },
   "risk": {
-    "max_loss_per_trade_dollars": 1000,
-    "max_total_open_risk_dollars": 3000,
-    "max_concurrent_positions": 2,
-    "_max_concurrent_comment": "Canonical plan, 29 Aug 2026: 3 -> 2. SPY and QQQ are one correlated bucket. With width fixed at $5 and quantity fixed at 1, this caps total margin reserve at $1,000 arithmetically -- no separate dollar-reserve gate needed.",
-    "max_positions_per_underlying": 1,
-    "max_filled_entries_per_underlying_per_session": 1,
-    "_daily_fill_cap_comment": "Canonical plan Sec 4.5, 29 Aug 2026: a morning fill blocks an afternoon re-entry in the same underlying even if that morning spread already closed.",
+    "max_loss_per_trade_dollars": 7000,
+    "max_total_open_risk_dollars": 20000,
+    "max_concurrent_positions": 3,
+    "_max_concurrent_comment": "PK decision, 31 Aug 2026: 2 -> 3, capped there explicitly. NOTE the interaction that made the old value binding twice: with 2 underlyings and max_positions_per_underlying=1, three concurrent positions were arithmetically unreachable -- min(3, 2x1) = 2. per_underlying goes to 2 so this cap is the real constraint, not a decoration. SPY and QQQ remain ONE correlated bucket: three short-put-spread positions are three expressions of the same short-index-downside trade, and one 2% gap hits all three together. That is the risk being accepted, and the write-up says so plainly.",
+    "max_positions_per_underlying": 2,
+    "max_filled_entries_per_underlying_per_session": 2,
+    "_daily_fill_cap_comment": "1 -> 2, 31 Aug 2026: needed to reach three concurrent positions from two underlyings. A morning fill no longer blocks an afternoon re-entry in the same name. Deliberately loosened; it concentrates same-underlying exposure inside a session.",
     "options_buying_power_floor_dollars": 25000,
     "options_buying_power_floor_multiple_of_max_loss": 5,
-    "daily_drawdown_halt_pct": -0.01,
-    "cumulative_drawdown_halt_equity_dollars": 98000,
-    "starting_equity_dollars": 100000
+    "daily_drawdown_halt_pct": -0.04,
+    "cumulative_drawdown_halt_equity_dollars": 92000,
+    "starting_equity_dollars": 100000,
+    "_drawdown_comment": "Re-based 31 Aug 2026 alongside the size increase, not loosened for its own sake. At 15 contracts a -1% ($1,000) daily halt trips on a $0.07 adverse move against one position -- it would have halted the agent permanently on noise. -4% ($4,000) fires at about a fifth of full exposure; $92,000 fires before the $19,755 worst case completes. Both stay REACHABLE, which is the property that matters: at 1 contract the old -1% halt could never fire at all, so the whole drawdown layer was decorative."
   },
   "quote_sanity": {
     "min_bid_dollars": 0.01,
