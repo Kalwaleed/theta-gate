@@ -95,6 +95,8 @@
     "unfilled_order_cancel_after_seconds": 60,
     "order_poll_max_attempts": 60,
     "no_bulk_operations": true,
+    "_assignment_flatten_comment": "PK decision, 31 Aug 2026: an overnight assignment is now flattened autonomously by an explicit single-symbol limit order rather than HALTing for a human. The limit crosses the touch by this fraction so it is marketable without chasing a broken book. Still never close_position or close-all — those need a human yes regardless of confirmation_mode.",
+    "assignment_flatten_slippage_pct": 0.005,
     "_no_bulk_comment": "cancel_all_orders, close_all_positions, close_position, exercise_options_position and do_not_exercise_options_position all require explicit human confirmation on Alpaca's own paper-trading skills, regardless of confirmation_mode. Theta Gate never calls any of them. Every close is an explicit order naming both legs.",
     "max_loop_exceptions_before_halt": 3
   }

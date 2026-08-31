@@ -901,3 +901,151 @@ def test_a_rehearsal_starts_from_the_real_journal_and_writes_only_the_copy(monke
     loop._append_journal("exit_intent", position_id="tg-e-20260831-1030-spy", reason="force_close")
     assert (tmp_path / "data" / "journal.jsonl").read_text() == real_journal, \
         "rehearsal writes must never reach the real journal"
+
+
+# ---------------------------------------------------------------------------
+# Autonomous assignment flatten
+# ---------------------------------------------------------------------------
+#
+# PK accepted the risk on 31 Aug: an agent needing a human awake at 09:30
+# is not the autonomous agent this is meant to be. This is the only
+# stock-order path in the codebase, so it is tested hard.
+
+import json as _json  # noqa: E402
+
+FLAT_GOV = _json.load(open("governance.json"))
+
+
+def _assigned(qty=100, symbol="SPY"):
+    return [{"symbol": symbol, "asset_class": "us_equity", "qty": str(qty)},
+            {"symbol": "SPY260909P00749000", "asset_class": "us_option", "qty": "1"}]
+
+
+FLAT_NOW = datetime(2026, 9, 1, 9, 32, tzinfo=ET)  # 13:32Z
+
+
+def _flat_mocks(monkeypatch, tmp_path, bid=765.0, ask=765.10, existing=None, submit=None,
+                quote_t="2026-09-01T13:31:30Z"):
+    monkeypatch.setattr(loop, "JOURNAL_PATH", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(loop.alpaca, "latest_quote",
+                        lambda s, profile=None: {"quote": {"bp": bid, "ap": ask, "t": quote_t}})
+    monkeypatch.setattr(loop.alpaca, "get_order_by_client_id",
+                        lambda cid, profile=None: existing or {})
+    sent = []
+    def fake_submit(symbol, qty, side, limit_price, cid, dry_run=False, profile=None):
+        sent.append({"symbol": symbol, "qty": qty, "side": side,
+                     "limit_price": limit_price, "cid": cid, "dry_run": dry_run})
+        return submit if submit is not None else {"id": "ord-flat-1", "status": "accepted"}
+    monkeypatch.setattr(loop.alpaca, "submit_equity", fake_submit)
+    return sent
+
+
+def test_long_shares_from_a_put_assignment_are_sold(monkeypatch, tmp_path):
+    """One contract assigned delivers 100 shares. Max loss is unchanged --
+    the long 749 put still caps it -- but ~$76k of stock against a $100k
+    account is a margin call, which is what makes this urgent."""
+    sent = _flat_mocks(monkeypatch, tmp_path)
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+
+    assert len(sent) == 1
+    assert sent[0]["symbol"] == "SPY" and sent[0]["side"] == "sell" and sent[0]["qty"] == 100
+    assert result[0]["ok"] is True
+
+
+def test_short_shares_from_a_call_assignment_are_bought_back(monkeypatch, tmp_path):
+    """Only bull_put trades today so this branch should never fire -- which
+    is exactly why it is written generically and tested. A position that
+    should not exist is the one worth handling."""
+    sent = _flat_mocks(monkeypatch, tmp_path)
+    loop._flatten_assigned_equity(_assigned(-100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert sent[0]["side"] == "buy" and sent[0]["qty"] == 100
+
+
+def test_the_limit_crosses_the_touch_but_is_bounded(monkeypatch, tmp_path):
+    """Marketable, not a market order. An unpriced market order into a
+    gapping open is the mistake this whole codebase exists to avoid."""
+    sent = _flat_mocks(monkeypatch, tmp_path, bid=765.0, ask=765.10)
+    loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    slip = FLAT_GOV["operational"]["assignment_flatten_slippage_pct"]
+    assert sent[0]["limit_price"] == pytest.approx(round(765.0 * (1 - slip), 2))
+    assert sent[0]["limit_price"] < 765.0, "must cross the bid to fill"
+    assert sent[0]["limit_price"] > 765.0 * 0.98, "but must not give the shares away"
+
+
+@pytest.mark.parametrize("bid,ask", [(0, 765.1), (765.0, 0), (765.2, 765.0), (-1, 5)])
+def test_an_unusable_quote_refuses_to_price_blind(bid, ask, monkeypatch, tmp_path):
+    """A crossed, zero or negative quote means no reliable price. Selling
+    $76k of stock at a guessed limit is worse than one more tick of
+    exposure on a position whose max loss is already capped."""
+    sent = _flat_mocks(monkeypatch, tmp_path, bid=bid, ask=ask)
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert sent == [], "must not submit against a broken quote"
+    assert result[0]["ok"] is False
+    assert any(e["event"] == "assignment_flatten_failed" and e["level"] == "critical"
+               for e in loop._read_journal())
+
+
+def test_a_quote_exception_does_not_abort_the_tick(monkeypatch, tmp_path):
+    """Exits and reconciliation still have to run. A dead quote endpoint
+    must journal and move on, not raise."""
+    _flat_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr(loop.alpaca, "latest_quote",
+                        lambda s, profile=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert result[0]["ok"] is False and result[0]["reason"] == "quote_unavailable"
+
+
+def test_the_flatten_order_id_is_deterministic_so_a_retry_cannot_double_sell(monkeypatch, tmp_path):
+    """The whole idempotency story. Two ticks racing the same assignment
+    must compute the same id; Alpaca answers 422 rather than selling 200
+    shares."""
+    sent = _flat_mocks(monkeypatch, tmp_path)
+    loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    first = sent[0]["cid"]
+    again = tmp_path / "again"; again.mkdir()
+    sent2 = _flat_mocks(monkeypatch, again)
+    loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert sent2[0]["cid"] == first
+    assert first.startswith("tg-flat-") and "spy" in first
+
+
+def test_an_already_live_flatten_order_is_adopted_not_duplicated(monkeypatch, tmp_path):
+    sent = _flat_mocks(monkeypatch, tmp_path, existing={"id": "ord-earlier", "status": "new"})
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert sent == [], "an existing order must be adopted, never re-sent"
+    assert result[0]["adopted"] is True
+
+
+def test_a_rejected_submit_is_journaled_critical_not_raised(monkeypatch, tmp_path):
+    _flat_mocks(monkeypatch, tmp_path, submit={"message": "422 client_order_id must be unique"})
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert result[0]["ok"] is False and result[0]["reason"] == "submit_failed"
+    assert any(e["event"] == "assignment_flatten_failed" for e in loop._read_journal())
+
+
+def test_dry_run_threads_through_to_the_broker_call(monkeypatch, tmp_path):
+    """A stock order is a broker WRITE. If dry_run did not reach it, a
+    rehearsal would sell real shares."""
+    sent = _flat_mocks(monkeypatch, tmp_path)
+    loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", True, FLAT_NOW)
+    assert sent[0]["dry_run"] is True
+
+
+def test_option_legs_are_never_touched_by_the_equity_flatten(monkeypatch, tmp_path):
+    """It filters on asset_class. Sending an equity order for an OCC
+    symbol would be rejected at best and wrong at worst."""
+    sent = _flat_mocks(monkeypatch, tmp_path)
+    loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert [s["symbol"] for s in sent] == ["SPY"]
+
+
+def test_a_stale_quote_refuses_to_price_blind(monkeypatch, tmp_path):
+    """Same freshness rule as gate_quote_sanity: a quote older than
+    governance.quote_sanity.max_quote_age_seconds must not price the
+    flatten -- the open is exactly when yesterday's close is still on
+    the tape."""
+    sent = _flat_mocks(monkeypatch, tmp_path, quote_t="2026-09-01T13:00:00Z")  # 32 min old
+    result = loop._flatten_assigned_equity(_assigned(100), FLAT_GOV, "submission", False, FLAT_NOW)
+    assert sent == [] and result[0] == {"symbol": "SPY", "ok": False, "reason": "stale_quote"}
+    failed = [e for e in loop._read_journal() if e["event"] == "assignment_flatten_failed"]
+    assert failed and "older than" in failed[0]["error"]
