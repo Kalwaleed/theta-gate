@@ -73,8 +73,39 @@ jobs:
         if: steps.vis.outputs.current != 'PUBLIC'
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "DRY RUN -- would flip to public, no change made." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            # A dry run that stops here proves only that `gh repo view`
+            # works, which needs read access. It says NOTHING about
+            # Administration: write -- the one permission the real flip
+            # depends on. That distinction is not hypothetical: this PAT
+            # was already found on 30 Aug to be missing a permission it
+            # was assumed to have (Pull requests, which 403'd the sanity
+            # read above).
+            #
+            # So probe the real endpoint with a no-op: PATCH visibility to
+            # the value it already holds. Same route, same permission
+            # check, zero effect on the repo. A 403 here on Monday is a
+            # fixable problem; the same 403 at 21:03 UTC on Thursday
+            # leaves the repo private through the Friday deadline, and a
+            # public repo is a hard submission gate.
+            echo "DRY RUN -- probing Administration: write without changing anything." \
+              >> "$GITHUB_STEP_SUMMARY"
+            if gh api -X PATCH "repos/$GITHUB_REPOSITORY" \
+                 -f visibility="${{ steps.vis.outputs.current }}" >/dev/null 2>probe.err; then
+              echo "PASS -- the PAT can write repo settings. The real flip will work." \
+                >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            {
+              echo "**FAIL -- the PAT cannot write repo settings.**"
+              echo "The Thursday flip WILL fail and the repo will stay private."
+              echo '```'
+              cat probe.err
+              echo '```'
+              echo "Fix: regenerate REPO_ADMIN_PAT at"
+              echo "github.com/settings/personal-access-tokens/new scoped to this repo"
+              echo "with **Administration: read and write**, then re-run this dry run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           gh repo edit "$GITHUB_REPOSITORY" --visibility public --accept-visibility-change-consequences
           echo "Flipped to public." >> "$GITHUB_STEP_SUMMARY"
