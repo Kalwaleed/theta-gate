@@ -903,8 +903,34 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
         _append_journal("no_trade", reason="regime_data_unavailable", detail=str(exc))
         return {"attempted": True, "filled": False, "reason": "regime_data_unavailable"}
 
+    # Which underlyings could still take an entry at all. Advisory: every
+    # gate still runs on the resolved plan below, and risk.py keeps the
+    # veto. This only stops us fetching chains for, and proposing on, an
+    # underlying that is already at its cap.
+    #
+    # Without it the proposer sees both names regardless. On 31 Aug it
+    # proposed SPY at 13:38 and 13:45 with SPY already capped -- correctly
+    # vetoed twice, and the 13:30 window spent for nothing while QQQ sat
+    # eligible and unoffered.
+    eligible = risk.available_underlyings(
+        {
+            "open_positions": open_positions_journal,
+            "entries_today": entries_today,
+            "filled_underlyings_today": filled_underlyings_today,
+        },
+        gov,
+    )
+    if not eligible:
+        # Return before the model call, not after: a proposal that cannot
+        # be acted on is a billed API call and a journal row promising a
+        # trade the caps already forbid.
+        _append_journal("no_trade", reason="all_underlyings_at_cap",
+                        open_positions=len(open_positions_journal),
+                        entries_today=entries_today)
+        return {"attempted": True, "filled": False, "reason": "all_underlyings_at_cap"}
+
     underlying_states = {}
-    for u in gov["strategy"]["underlyings"]:
+    for u in eligible:
         try:
             underlying_states[u] = market.build_underlying_state(
                 u, now, gov["strategy"]["dte_min"], gov["strategy"]["dte_max"], profile=profile,
@@ -914,7 +940,9 @@ def _attempt_entry_pipeline(window_label, now, gov, profile, dry_run, account_st
             _append_journal("no_trade", reason="underlying_data_unavailable", underlying=u, detail=str(exc))
             return {"attempted": True, "filled": False, "reason": "underlying_data_unavailable"}
 
-    # brain.propose sees only scalar market numbers, never the raw chain.
+    # brain.propose sees only scalar market numbers, never the raw chain --
+    # and now only for underlyings that could actually be traded, so the
+    # model cannot spend a window proposing something already at cap.
     brain_context = {u: {k: v for k, v in s.items() if k != "contracts"} for u, s in underlying_states.items()}
     brain_context.update({"vix": regime["vix"], "vix9d": regime["vix9d"], "vix3m": regime["vix3m"]})
 

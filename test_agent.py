@@ -786,3 +786,106 @@ def test_parse_chain_keeps_zero_bid_only_when_allowed():
     kept = {c.symbol: c for c in spread.parse_chain(snaps, allow_zero_bid=True)}
     assert set(kept) == {"SPY260908P00695000", "SPY260908P00700000"}
     assert kept["SPY260908P00695000"].bid == 0.0 and kept["SPY260908P00695000"].mid == 0.025
+
+
+# ---------------------------------------------------------------------------
+# risk.available_underlyings — advisory, and must never disagree with the gates
+# ---------------------------------------------------------------------------
+
+def _plan_for(underlying):
+    """A resolved plan for `underlying`, so the same scenario can be run
+    through the real gates and compared against the advisory helper."""
+    base = real_plan()
+    return spread.SpreadPlan(
+        underlying=underlying, direction=base.direction, expiry=base.expiry,
+        short=base.short, long=base.long, width=base.width, credit=base.credit,
+        qty=base.qty, max_loss_dollars=base.max_loss_dollars,
+    )
+
+
+def _gate_allows(underlying, state):
+    """True when neither per-underlying cap gate vetoes this underlying."""
+    plan = _plan_for(underlying)
+    return (risk.gate_concurrent(state, plan, GOV, NOW) is None
+            and risk.gate_daily_fill_cap_per_underlying(state, plan, GOV, NOW) is None)
+
+
+def test_both_underlyings_available_on_a_clean_session():
+    state = {"open_positions": [], "entries_today": 0, "filled_underlyings_today": []}
+    assert risk.available_underlyings(state, GOV) == ["SPY", "QQQ"]
+
+
+def test_an_open_position_removes_only_its_own_underlying():
+    """The exact 31 Aug situation: SPY filled at 10:33, so the 13:30 window
+    should have been offered QQQ and only QQQ."""
+    state = {"open_positions": [{"underlying": "SPY"}], "entries_today": 1,
+             "filled_underlyings_today": ["SPY"]}
+    assert risk.available_underlyings(state, GOV) == ["QQQ"]
+
+
+def test_a_closed_round_trip_still_blocks_the_same_underlying_today():
+    """gate_daily_fill_cap exists because a morning fill blocks an
+    afternoon re-entry even after that spread closed. The advisory helper
+    has to honour that too, or it would offer a name the gate then vetoes."""
+    state = {"open_positions": [], "entries_today": 1,
+             "filled_underlyings_today": ["SPY"]}
+    assert risk.available_underlyings(state, GOV) == ["QQQ"]
+
+
+def test_nothing_is_available_at_the_concurrent_cap():
+    state = {"open_positions": [{"underlying": "SPY"}, {"underlying": "QQQ"}],
+             "entries_today": 2, "filled_underlyings_today": ["SPY", "QQQ"]}
+    assert risk.available_underlyings(state, GOV) == []
+
+
+def test_nothing_is_available_once_the_session_entry_cap_is_hit():
+    """Both names are individually free, but the session is done. Returning
+    them would send the loop off to fetch two chains and bill a model call
+    for a trade gate_concurrent is about to refuse."""
+    state = {"open_positions": [], "entries_today": GOV["entry"]["max_new_entries_per_session"],
+             "filled_underlyings_today": []}
+    assert risk.available_underlyings(state, GOV) == []
+
+
+@pytest.mark.parametrize("state", [
+    {"open_positions": [], "entries_today": 0, "filled_underlyings_today": []},
+    {"open_positions": [{"underlying": "SPY"}], "entries_today": 1, "filled_underlyings_today": ["SPY"]},
+    {"open_positions": [{"underlying": "QQQ"}], "entries_today": 1, "filled_underlyings_today": ["QQQ"]},
+    {"open_positions": [], "entries_today": 1, "filled_underlyings_today": ["SPY"]},
+    {"open_positions": [{"underlying": "SPY"}, {"underlying": "QQQ"}], "entries_today": 2,
+     "filled_underlyings_today": ["SPY", "QQQ"]},
+    {"open_positions": [], "entries_today": 2, "filled_underlyings_today": []},
+], ids=["clean", "spy-open", "qqq-open", "spy-closed-today", "both-open", "session-cap"])
+def test_the_advisory_list_never_disagrees_with_the_gates(state):
+    """THE test for this helper. It duplicates gate arithmetic rather than
+    calling the gates, because the gates need a resolved SpreadPlan that
+    does not exist yet at proposal time. Duplication is only safe while the
+    two provably agree.
+
+    Offering something the gates then veto wastes a window (the bug this
+    fixes). Withholding something the gates would have allowed silently
+    costs a trade, which is worse and much harder to notice.
+    """
+    advisory = risk.available_underlyings(state, GOV)
+    for underlying in GOV["strategy"]["underlyings"]:
+        assert (underlying in advisory) == _gate_allows(underlying, state), (
+            f"{underlying}: advisory={underlying in advisory} "
+            f"gates={_gate_allows(underlying, state)} for {state}")
+
+
+def test_the_helper_reads_governance_not_hardcoded_names():
+    """A third underlying added to governance.json must appear here without
+    touching risk.py."""
+    gov = {**GOV, "strategy": {**GOV["strategy"], "underlyings": ["SPY", "QQQ", "IWM"]}}
+    state = {"open_positions": [], "entries_today": 0, "filled_underlyings_today": []}
+    assert risk.available_underlyings(state, gov) == ["SPY", "QQQ", "IWM"]
+
+
+def test_the_helper_is_pure():
+    """Same inputs, same answer, and the caller's state is not mutated --
+    loop.py passes its live session counters straight in."""
+    state = {"open_positions": [{"underlying": "SPY"}], "entries_today": 1,
+             "filled_underlyings_today": ["SPY"]}
+    snapshot = repr(state)
+    assert risk.available_underlyings(state, GOV) == risk.available_underlyings(state, GOV)
+    assert repr(state) == snapshot

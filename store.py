@@ -70,6 +70,7 @@ SCHEMA_VERSION = 2
 # reason token shows up as 'other' in the dashboard instead of being
 # silently mis-parsed into a nonexistent gate.
 NON_GATE_NO_TRADE_REASONS = {
+    "all_underlyings_at_cap",
     "bearish_no_call_side",
     "halt_active",
     "max_entries_reached",

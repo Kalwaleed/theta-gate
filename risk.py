@@ -276,6 +276,47 @@ def gate_concurrent(state: dict, plan, gov: dict, now: datetime) -> str | None:
     return None
 
 
+def available_underlyings(state: dict, gov: dict) -> list[str]:
+    """Which underlyings could still accept a new entry right now.
+
+    ADVISORY ONLY, and the distinction matters. This does not decide
+    anything: gate_concurrent and gate_daily_fill_cap_per_underlying still
+    run on the resolved plan and still hold the veto. If this function and
+    those gates ever disagree, the gates win and this one has a bug.
+
+    It exists because the proposer was being shown underlyings it could
+    not possibly trade. On 31 Aug the model proposed SPY at 13:38 and
+    again at 13:45 with SPY already at its per-underlying cap; both were
+    correctly vetoed, and both wasted the 13:30 window. QQQ was eligible
+    the whole time and was never offered, so the session took one position
+    where governance allows two.
+
+    Deliberately mirrors the two gates' arithmetic rather than calling
+    them: the gates take a resolved SpreadPlan (a strike-level object that
+    does not exist yet at proposal time), while this takes only the
+    session counters. test_agent.py asserts the two agree.
+    """
+    open_positions = state.get("open_positions", [])
+    if len(open_positions) >= gov["risk"]["max_concurrent_positions"]:
+        return []
+    if state.get("entries_today", 0) >= gov["entry"]["max_new_entries_per_session"]:
+        return []
+
+    filled_today = state.get("filled_underlyings_today", [])
+    per_underlying_cap = gov["risk"]["max_positions_per_underlying"]
+    fill_cap = gov["risk"]["max_filled_entries_per_underlying_per_session"]
+
+    eligible = []
+    for underlying in gov["strategy"]["underlyings"]:
+        open_here = sum(1 for p in open_positions if p.get("underlying") == underlying)
+        if open_here >= per_underlying_cap:
+            continue
+        if filled_today.count(underlying) >= fill_cap:
+            continue
+        eligible.append(underlying)
+    return eligible
+
+
 def gate_daily_fill_cap_per_underlying(state: dict, plan, gov: dict, now: datetime) -> str | None:
     """A filled entry earlier today blocks a same-underlying re-entry later
     today, even if that earlier spread has already closed — canonical plan
