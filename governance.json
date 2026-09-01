@@ -8,9 +8,9 @@
     "structure": "vertical",
     "legs": 2,
     "width_dollars": 5,
-    "dte_min": 6,
-    "dte_max": 9,
-    "_dte_comment": "Canonical plan (docs/THETA_GATE_CANONICAL_PLAN.md) 2 & Sec 4.1, 29 Aug 2026: narrowed from 4-9 to 6-9 and dropped the old dte_preferred_max query-order preference. With flatten on Thu 3 Sep, a 4-DTE spread entered Monday hits the 2-DTE time exit Wednesday and pays two bid-asks for two days of theta; loop.py enumerates every eligible expiry in [6,9] and ranks candidates instead of preferring one DTE over another.",
+    "dte_min": 3,
+    "dte_max": 5,
+    "_dte_comment": "PK target of 5-10% by EOW, 1 Sep 2026: 6-9 -> 3-5. THE BINDING CONSTRAINT WAS TENOR, NOT SIZE. Everything is force-closed Thu 3 Sep, so a 9-DTE spread entered Tuesday is held two sessions of a nine-day life and captures ~35% of its credit -- the premium being sold sits in days the competition does not have. Measured on the live position: $0.61 -> $0.49 in one session. At 3-5 DTE the same delta and the same defined risk capture ~70-80% by Thursday, which roughly doubles the return per unit of margin. The canonical plan's 6-9 argument was about avoiding the 2-DTE time exit in a normal week; with a hard Thursday flatten that reasoning inverts. Still never 0DTE -- no greeks, so the delta rule has no input.",
     "short_delta_min": 0.16,
     "short_delta_max": 0.25,
     "_credit_quality_comment": "Verified live 26 Aug 2026: credit/width is NOT a fixed 0.20-0.45 band. It tracks ~0.8 x short_delta and falls as width increases (5-wide 0.120 -> 25-wide 0.056). This gate catches a bad quote relative to that curve, not an absolute ratio.",
@@ -20,11 +20,11 @@
     "min_credit_pct_of_width": 0.1,
     "_fixed_quantity_comment": "Canonical plan Sec 2.12, 29 Aug 2026: exactly one contract for the entire hackathon, not just the first trade. A 5-session sample cannot justify scaling; size_position() no longer computes qty from a max-loss budget.",
     "fixed_quantity": 1,
-    "_sizing_comment": "PK decision, 31 Aug 2026: size scales with the proposer's stated confidence between min_contracts and max_contracts. The LLM does NOT size the position -- it supplies one input to a deterministic function whose bounds live in this file, which no LLM can write to, and gate_max_loss_per_trade / gate_total_open_risk / gate_buying_power_floor all veto the result independently. max_contracts 2 -> 15: at 2 the whole book committed $2,000 of $100,000 and a perfect remaining week returned ~0.12%, a rounding error on a judged criterion.",
+    "_sizing_comment": "PK, 1 Sep 2026: sized to a hard 50%-of-account deployment cap. 33 contracts x 3 positions x $500 margin = $49,500. Size scales with the proposer's confidence between min_contracts and max_contracts; the LLM does NOT size the position -- it supplies one input to a deterministic function whose bounds live in this file, which no LLM can write to, and gate_max_loss_per_trade / gate_total_open_risk / gate_buying_power_floor all veto the result independently. The delta band is deliberately UNCHANGED: at 50% deployment the existing 0.16-0.25 band already targets ~6%, and widening to 0.30 would buy 2.8 more points of upside for 10 points of win probability -- a bad trade, and it would change the one strategy parameter the whole write-up is built on.",
     "_sizing_threshold_comment": "confidence_floor/ceiling are the model's own [0,1] scale, NOT fitted to observed output. Every confidence seen so far is 0.60-0.62 (four proposals, 31 Aug), so a threshold placed near 0.6 would be tuned to four data points -- the exact criticism levelled at the VRP re-base. Effective step-up is at 0.75, which those proposals do NOT reach: the mechanism is live but inert until the model expresses genuine conviction. Deliberate.",
     "sizing_mode": "confidence",
     "min_contracts": 1,
-    "max_contracts": 15,
+    "max_contracts": 33,
     "confidence_floor": 0.5,
     "confidence_ceiling": 1.0
   },
@@ -43,7 +43,7 @@
     "take_profit_pct_of_credit": 0.5,
     "stop_close_debit_multiple": 2.0,
     "_stop_comment": "Renamed from stop_loss_multiple_of_credit (canonical plan Sec 2.1, 29 Aug 2026): the multiple applies to the CLOSING DEBIT, not the loss. At credit=$0.60, this multiple gives a $1.20 closing debit and a $0.60 loss (1x credit), not a $1.20 loss. exit_signal()'s arithmetic was already correct \u2014 only the name was misleading.",
-    "time_exit_dte": 2,
+    "time_exit_dte": 1,
     "force_close_start_date": "2026-09-03",
     "force_close_start_time_et": "14:30",
     "_force_close_comment": "Canonical plan Sec 8.2, 29 Aug 2026: ladder moved 30 min earlier across the board. The old ladder's forceful rung landed at 15:50, ten minutes before the 16:00 close, with no recovery time if it failed.",
@@ -64,22 +64,24 @@
         "at_et": "15:45",
         "action": "reconcile_and_alert"
       }
-    ]
+    ],
+    "_time_exit_comment": "2 -> 1, 1 Sep 2026: at 3-5 DTE a time exit at 2 fires the day after entry and gives back most of the decay this change exists to capture. Thursday's force-close ladder is the real exit now; the time exit is a backstop for a position that somehow outlives it."
   },
   "risk": {
-    "max_loss_per_trade_dollars": 7000,
-    "max_total_open_risk_dollars": 20000,
+    "max_loss_per_trade_dollars": 15000,
+    "max_total_open_risk_dollars": 44000,
     "max_concurrent_positions": 3,
     "_max_concurrent_comment": "PK decision, 31 Aug 2026: 2 -> 3, capped there explicitly. NOTE the interaction that made the old value binding twice: with 2 underlyings and max_positions_per_underlying=1, three concurrent positions were arithmetically unreachable -- min(3, 2x1) = 2. per_underlying goes to 2 so this cap is the real constraint, not a decoration. SPY and QQQ remain ONE correlated bucket: three short-put-spread positions are three expressions of the same short-index-downside trade, and one 2% gap hits all three together. That is the risk being accepted, and the write-up says so plainly.",
     "max_positions_per_underlying": 2,
     "max_filled_entries_per_underlying_per_session": 2,
     "_daily_fill_cap_comment": "1 -> 2, 31 Aug 2026: needed to reach three concurrent positions from two underlyings. A morning fill no longer blocks an afternoon re-entry in the same name. Deliberately loosened; it concentrates same-underlying exposure inside a session.",
     "options_buying_power_floor_dollars": 25000,
-    "options_buying_power_floor_multiple_of_max_loss": 5,
-    "daily_drawdown_halt_pct": -0.04,
-    "cumulative_drawdown_halt_equity_dollars": 92000,
+    "options_buying_power_floor_multiple_of_max_loss": 3,
+    "daily_drawdown_halt_pct": -0.06,
+    "cumulative_drawdown_halt_equity_dollars": 90000,
     "starting_equity_dollars": 100000,
-    "_drawdown_comment": "Re-based 31 Aug 2026 alongside the size increase, not loosened for its own sake. At 15 contracts a -1% ($1,000) daily halt trips on a $0.07 adverse move against one position -- it would have halted the agent permanently on noise. -4% ($4,000) fires at about a fifth of full exposure; $92,000 fires before the $19,755 worst case completes. Both stay REACHABLE, which is the property that matters: at 1 contract the old -1% halt could never fire at all, so the whole drawdown layer was decorative."
+    "_drawdown_comment": "Re-based with the size increase, 1 Sep 2026. Worst case is $41,382 (41% of the account), so the old -1% halt would trip on ordinary intraday noise and freeze the agent for the rest of the week. -6% fires at about a seventh of full exposure; $90,000 fires well before the worst case completes. Both stay REACHABLE -- at 1 contract the old halt could never fire at all, so the whole drawdown layer was decoration.",
+    "_bp_multiple_comment": "5 -> 3, 1 Sep 2026. This gate, not the risk caps, was the real size ceiling: 5x a position's max loss capped the book at 27 contracts. At 33 contracts the actual post-trade ratio is 3.5x, so 3 is the smallest relaxation that admits the target size -- 2 was drafted first and was more than needed. The absolute $25,000 floor is unchanged and still binds."
   },
   "quote_sanity": {
     "min_bid_dollars": 0.01,
