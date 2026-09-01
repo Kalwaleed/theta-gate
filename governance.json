@@ -26,7 +26,9 @@
     "min_contracts": 1,
     "max_contracts": 33,
     "confidence_floor": 0.5,
-    "confidence_ceiling": 1.0
+    "confidence_ceiling": 1.0,
+    "sizing_signal": "vrp",
+    "_sizing_signal_comment": "1 Sep 2026, docs/STRATEGY-REVIEW-2026-09-01 Sec 5: size on MEASURED variance risk premium rather than the model's self-reported confidence. Across every live proposal on 31 Aug the model answered 0.60, 0.60, 0.60, 0.62 -- a constant carries no signal, so sizing on it was sizing on nothing. VRP is the edge this strategy claims, it is measured from the chain and the bars, and it varies. Set sizing_signal to 'confidence' to switch back."
   },
   "entry": {
     "windows_et": [
@@ -101,7 +103,9 @@
     "realised_vol_lookback_days": 10,
     "require_atm_iv_gte_realised_vol": true,
     "_min_vrp_points_comment": "Canonical plan Sec 4.6, 29 Aug 2026: tightened from a plain IV>=RV check to a 2.0-vol-point margin -- IV barely above RV is noise, not a priced premium. 30 Aug 2026 (PK, option C): re-based to 1.0 together with the 10-day window above; the 2.0 cushion was sized against a 20-day RV. Chosen with Friday's data in view -- disclosed as such in the write-up.",
-    "min_vrp_points": 1.0
+    "min_vrp_points": 1.0,
+    "vrp_points_for_max_size": 6.0,
+    "_max_size_comment": "Vol points of premium at which sizing reaches max_contracts, scaling linearly from min_vrp_points (1.0, the entry floor). 6.0 is roughly the historical SPX VRP mean and is NOT fitted to this week: Monday's SPY print was ~3.4 points (IV 11.2 vs RV10 7.8), which lands mid-band by arithmetic rather than by tuning."
   },
   "environment": {
     "paper_flag_true_values": [

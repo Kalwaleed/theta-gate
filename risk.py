@@ -228,59 +228,78 @@ def gate_vrp_present(state: dict, plan, gov: dict, now: datetime) -> str | None:
 # Exposure group
 # ---------------------------------------------------------------------------
 
-def size_position(plan, gov: dict, confidence: float | None = None) -> int:
+def measured_vrp_points(state: dict) -> float | None:
+    """ATM implied minus trailing realised vol, in vol points -- the same
+    quantity gate_vrp_present thresholds. Exposed rather than recomputed so
+    the gate and the sizer can never disagree about what the premium is."""
+    atm_iv, realised_vol = state.get("atm_iv"), state.get("realised_vol")
+    if atm_iv is None or realised_vol is None:
+        return None
+    return (atm_iv - realised_vol) * 100
+
+
+def _scale(value: float, floor_v: float, ceil_v: float, lo: int, hi: int) -> int:
+    """Linear interpolation from a signal onto a contract count, clamped at
+    both ends. Shared by both sizing signals so they cannot drift apart."""
+    if hi <= lo or ceil_v <= floor_v:
+        return lo
+    t = min(1.0, max(0.0, (value - floor_v) / (ceil_v - floor_v)))
+    return min(hi, lo + int(t * (hi - lo + 1)))
+
+
+def size_position(plan, gov: dict, confidence: float | None = None,
+                  vrp_points: float | None = None) -> int:
     """How many contracts, from a deterministic function of governance and
-    (optionally) the proposer's stated confidence.
+    a market signal.
 
-    THE LLM DOES NOT SIZE THE POSITION. It supplies one input to this
-    function; the function's bounds, scale and ceiling all live in
-    governance.json, which no LLM can write to. The model cannot reach
-    max_contracts, cannot move the thresholds, and cannot exceed anything:
-    gate_max_loss_per_trade, gate_total_open_risk and
-    gate_buying_power_floor all still run afterwards and still veto
-    independently. Confidence is an input, not an authority.
+    THE LLM DOES NOT SIZE THE POSITION. The bounds, the scale and the
+    ceiling all live in governance.json, which no LLM can write to, and
+    gate_max_loss_per_trade / gate_total_open_risk / gate_buying_power_floor
+    all still run afterwards and veto independently.
 
-    That said, this IS a real weakening of the older claim that the model
-    has no influence on risk at all, and the write-up says so rather than
-    hiding it -- "never sizes a position" became "can scale within a range
-    Python defines and cannot exceed".
+    Signal, by governance.strategy.sizing_signal:
 
-    Sizing is linear in confidence between confidence_floor and
-    confidence_ceiling, floored, and clamped to [min_contracts,
-    max_contracts]. With the current 1..2 range that reduces to a single
-    step-up at the midpoint, 0.75. The floor and ceiling are the model's
-    own [0,1] scale and are deliberately NOT fitted to observed output:
-    every confidence produced so far is 0.60-0.62, so anchoring near 0.6
-    would tune the threshold to four data points.
+      "vrp"         MEASURED variance risk premium in vol points, scaled
+                    from min_vrp_points (the entry floor) to
+                    vrp_points_for_max_size. This is the edge the strategy
+                    actually claims; it is measured from the chain and the
+                    bars, and it varies with the market.
+
+      "confidence"  The model's self-reported conviction. Kept as a
+                    fallback and for comparison, but see
+                    docs/STRATEGY-REVIEW-2026-09-01 Sec 5: across every
+                    live proposal on 31 Aug the model answered 0.60, 0.60,
+                    0.60, 0.62. A constant carries no signal, so sizing on
+                    it was sizing on nothing.
+
+    Missing signal falls back to min_contracts -- never to max. A sizer
+    that maxes out on absent data is the wrong failure direction.
 
     Returns 0 -- never fractional, never negative -- if even the minimum
-    size would breach the per-trade cap. The real enforcement is
-    gate_max_loss_per_trade; this only keeps size_position from proposing
-    a doomed qty.
+    would breach the per-trade cap.
     """
     per_contract_loss = (plan.width - plan.credit) * 100
     if per_contract_loss <= 0:
         return 0
 
-    if gov["strategy"].get("sizing_mode") != "confidence" or confidence is None:
-        qty = gov["strategy"]["fixed_quantity"]
+    s = gov["strategy"]
+    signal = s.get("sizing_signal", s.get("sizing_mode"))
+    lo = s.get("min_contracts", s.get("fixed_quantity", 1))
+    hi = s.get("max_contracts", lo)
+
+    if signal == "vrp" and vrp_points is not None:
+        qty = _scale(vrp_points, gov["vrp"]["min_vrp_points"],
+                     gov["vrp"]["vrp_points_for_max_size"], lo, hi)
+    elif signal == "confidence" and confidence is not None:
+        qty = _scale(float(confidence), s["confidence_floor"], s["confidence_ceiling"], lo, hi)
     else:
-        lo = gov["strategy"]["min_contracts"]
-        hi = gov["strategy"]["max_contracts"]
-        floor_c = gov["strategy"]["confidence_floor"]
-        ceil_c = gov["strategy"]["confidence_ceiling"]
-        if hi <= lo or ceil_c <= floor_c:
-            qty = lo
-        else:
-            t = (float(confidence) - floor_c) / (ceil_c - floor_c)
-            t = min(1.0, max(0.0, t))
-            qty = min(hi, lo + int(t * (hi - lo + 1)))
+        qty = lo
 
     if qty < 1:
         return 0
-    # Shrink to fit rather than refusing outright: a 2-contract plan that
-    # breaches the per-trade cap is still a valid 1-contract plan, and
-    # returning 0 there would silently forfeit a trade the guard allows.
+    # Shrink to fit rather than refusing: a plan too big for the per-trade
+    # cap is still a valid smaller plan, and returning 0 would silently
+    # forfeit a trade the guard allows.
     while qty > 1 and per_contract_loss * qty > gov["risk"]["max_loss_per_trade_dollars"]:
         qty -= 1
     if per_contract_loss * qty > gov["risk"]["max_loss_per_trade_dollars"]:
@@ -435,7 +454,7 @@ def check_all(state: dict, plan, gov: dict, now: datetime,
         if reason:
             return reason, 0
 
-    qty = size_position(plan, gov, confidence)
+    qty = size_position(plan, gov, confidence, measured_vrp_points(state))
     for gate in _SIZED_GATES:
         reason = gate(state, plan, gov, now, qty)
         if reason:

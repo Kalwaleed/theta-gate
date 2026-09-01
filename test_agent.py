@@ -998,14 +998,82 @@ def test_full_exposure_leaves_the_buying_power_floor_intact(real_gov):
     assert remaining >= r["options_buying_power_floor_multiple_of_max_loss"] * per_position
 
 
-def test_the_confidence_band_spans_the_contract_range(real_gov):
-    """min and max contracts must both be reachable from a confidence in
-    [0,1], or one end of the band is unusable."""
+def test_the_active_sizing_band_spans_the_contract_range(real_gov):
+    """Both ends of the band must be reachable from a real signal value, or
+    half the configured range is unusable. Follows sizing_signal rather
+    than hardcoding one, so switching signals cannot silently orphan this.
+    """
     s = real_gov["strategy"]
-    if s.get("sizing_mode") != "confidence":
-        pytest.skip("fixed sizing")
-    import json as _j
     plan = _sized_plan()
-    sizes = {risk.size_position(plan, real_gov, c / 100) for c in range(0, 101)}
+    signal = s.get("sizing_signal", s.get("sizing_mode"))
+
+    if signal == "vrp":
+        floor_v, ceil_v = real_gov["vrp"]["min_vrp_points"], real_gov["vrp"]["vrp_points_for_max_size"]
+        span = ceil_v - floor_v
+        sizes = {risk.size_position(plan, real_gov, None, floor_v + span * i / 100)
+                 for i in range(101)}
+    elif signal == "confidence":
+        sizes = {risk.size_position(plan, real_gov, c / 100) for c in range(101)}
+    else:
+        pytest.skip("fixed sizing")
+
     assert min(sizes) == s["min_contracts"], f"min_contracts unreachable; got {min(sizes)}"
     assert max(sizes) == s["max_contracts"], f"max_contracts unreachable; got {max(sizes)}"
+
+
+# ---------------------------------------------------------------------------
+# Sizing on measured VRP rather than self-reported confidence
+# ---------------------------------------------------------------------------
+
+def test_measured_vrp_matches_what_the_gate_thresholds(real_gov):
+    """The sizer and gate_vrp_present must never disagree about what the
+    premium is -- one function, exposed, not two implementations."""
+    state = {"atm_iv": 0.112, "realised_vol": 0.078}
+    assert risk.measured_vrp_points(state) == pytest.approx(3.4)
+    assert risk.measured_vrp_points({"atm_iv": None, "realised_vol": 0.1}) is None
+    assert risk.measured_vrp_points({}) is None
+
+
+def test_richer_premium_buys_more_contracts(real_gov):
+    """The whole point: size tracks a measured market quantity. Monday's
+    live SPY print was ~3.4 points (IV 11.2 vs RV10 7.8)."""
+    plan = _sized_plan()
+    thin = risk.size_position(plan, real_gov, None, 1.2)
+    monday = risk.size_position(plan, real_gov, None, 3.4)
+    rich = risk.size_position(plan, real_gov, None, 8.0)
+    assert thin < monday < rich, f"{thin} / {monday} / {rich}"
+    assert rich == real_gov["strategy"]["max_contracts"]
+
+
+def test_a_missing_vrp_reading_sizes_down_not_up(real_gov):
+    """Absent data must never max out the book. gate_vrp_present refuses
+    the trade entirely in this state; if it somehow reached the sizer, the
+    safe answer is the minimum."""
+    assert risk.size_position(_sized_plan(), real_gov, 0.99, None) \
+        == real_gov["strategy"]["min_contracts"]
+
+
+def test_confidence_no_longer_moves_size_while_vrp_is_the_signal(real_gov):
+    """The model's self-reported number has been a constant 0.60 across
+    every live proposal. It must not quietly keep steering size."""
+    if real_gov["strategy"].get("sizing_signal") != "vrp":
+        pytest.skip("confidence is the active signal")
+    plan = _sized_plan()
+    sizes = {risk.size_position(plan, real_gov, c, 3.4) for c in (0.0, 0.5, 0.62, 1.0)}
+    assert len(sizes) == 1, f"confidence still changed size: {sizes}"
+
+
+def test_vrp_sizing_stays_inside_the_band(real_gov):
+    plan = _sized_plan()
+    lo, hi = real_gov["strategy"]["min_contracts"], real_gov["strategy"]["max_contracts"]
+    for v in (-10.0, 0.0, 1.0, 3.4, 6.0, 50.0, float("inf")):
+        assert lo <= risk.size_position(plan, real_gov, None, v) <= hi, f"vrp {v} escaped"
+
+
+def test_the_vrp_max_size_point_is_not_fitted_to_this_week(real_gov):
+    """Monday's reading was ~3.4 points. A ceiling set near it would tune
+    sizing to one observation -- the criticism levelled at the VRP re-base,
+    which applies here too. 6.0 is the historical SPX mean and leaves
+    Monday mid-band."""
+    assert real_gov["vrp"]["vrp_points_for_max_size"] >= 5.0, (
+        "ceiling moved toward this week's readings -- that is fitting")
