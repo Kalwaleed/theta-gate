@@ -518,6 +518,11 @@ def main():
             live = p["status"] == "open"
             pnl = p["unrealised_pnl_dollars"] if live else p["realised_pnl_dollars"]
             debit = p["latest_mark"] if live else p["close_debit"]
+            # A mark is only as good as its clock. If the Actions cron stalls,
+            # the number stays on the page looking current -- so date it.
+            # A closed debit is final and needs no such qualifier.
+            mark_title = (f' title="marked {esc(short_ts(p["latest_mark_ts"]))}"'
+                          if live and p["latest_mark_ts"] else "")
             cls = "tg-win" if (pnl or 0) > 0 else ("tg-loss" if (pnl or 0) < 0 else "")
             state = ('<span class="tg-tag-s acc">open</span>' if p["status"] == "open"
                      else f'<span class="tg-tag-s">'
@@ -527,7 +532,7 @@ def main():
                 f'{esc(short_ts(p["entry_ts"]))}<div class="tg-sym">exp {esc(p["expiry"] or "--")}</div>',
                 f'<span class="tg-num">{esc(str(p["qty"] if p["qty"] is not None else "--"))}</span>',
                 f'<span class="tg-num">{money(p["credit"])}</span>',
-                f'<span class="tg-num">{money(debit)}</span>'
+                f'<span class="tg-num"{mark_title}>{money(debit)}</span>'
                 + ('<div class="tg-sym">mark</div>' if live and debit is not None else ''),
                 f'<span class="tg-num">{money(p["max_loss_dollars"])}</span>',
                 state,

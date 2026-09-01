@@ -285,6 +285,39 @@ def test_page_renders_a_full_week_of_trading(tmp_path, monkeypatch):
     assert "Sample size: 2 closed trades" in body
 
 
+def test_an_open_position_dates_its_mark(tmp_path, monkeypatch):
+    """A mark is only as good as its clock. The Actions cron can stall --
+    it has -- and the last cost_to_close then sits on a public page looking
+    current. The number carries the time it was taken so a judge can tell
+    a live book from a stale one. A closed debit is final, so it gets no
+    such qualifier and must not claim one."""
+    records = [
+        {"ts": "2026-08-31T10:31:00-04:00", "event": "entry_filled",
+         "position_id": "open1", "underlying": "SPY", "direction": "bull_put",
+         "trade_date": "2026-08-31", "window": "1030", "expiry": "2026-09-09",
+         "width": 5.0, "qty": 1, "credit": 0.61, "max_loss_dollars": 439.0},
+        {"ts": "2026-09-01T11:00:00-04:00", "event": "exit_evaluated",
+         "position_id": "open1", "credit": 0.61, "cost_to_close": 0.50, "signal": "hold"},
+        {"ts": "2026-09-01T13:47:00-04:00", "event": "exit_evaluated",
+         "position_id": "open1", "credit": 0.61, "cost_to_close": 0.84, "signal": "hold"},
+        {"ts": "2026-08-31T10:32:00-04:00", "event": "entry_filled",
+         "position_id": "shut1", "underlying": "QQQ", "direction": "bull_put",
+         "trade_date": "2026-08-31", "window": "1030", "expiry": "2026-09-04",
+         "width": 5.0, "qty": 1, "credit": 0.55, "max_loss_dollars": 445.0},
+        {"ts": "2026-09-01T12:00:00-04:00", "event": "exit_evaluated",
+         "position_id": "shut1", "credit": 0.55, "cost_to_close": 0.40, "signal": "hold"},
+        {"ts": "2026-09-01T12:30:00-04:00", "event": "exit_filled", "position_id": "shut1",
+         "underlying": "QQQ", "reason": "take_profit", "qty": 1, "close_debit": 0.25},
+    ]
+    _, body = _run_app(_stage(tmp_path, records), monkeypatch)
+
+    assert 'title="marked Tue 01 Sep, 13:47 ET"' in body
+    assert 'title="marked Tue 01 Sep, 11:00 ET"' not in body, \
+        "the LATEST mark dates the cell; an earlier one understates staleness"
+    assert body.count('title="marked') == 1, \
+        "only the open row is marked -- a closed debit is settled, not a mark"
+
+
 def test_page_shows_a_halt(tmp_path, monkeypatch):
     """HALT is the kill switch. If the page still reads 'history verified'
     while the agent is halted, the dashboard is lying about the one thing
