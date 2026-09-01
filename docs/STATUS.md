@@ -1,6 +1,6 @@
 # Status — Theta Gate
 
-**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Mon 31 Aug 2026, ~14:10 ET (21:10 Riyadh). First live trading day, in progress right now. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Tue 1 Sep 2026, ~15:25 ET (22:25 Riyadh). Second live trading day, closing. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
@@ -68,7 +68,7 @@ reviewed the conclusion. **Decision: leave `width_dollars` at 5.**
 - **QQQ has not been proposed today — confirmed by design, not a gap.** `brain.py` builds market-data context for both SPY and QQQ every call (`_build_context_text`, lines 118-122) but its system prompt requires exactly ONE underlying per proposal (`brain.py:68`, "propose ONE underlying, ONE direction"). The model saw both symbols each time and chose SPY twice. This matches the canonical plan Sec 9.1/9.2 cited in the file header — one bounded model call, one proposal, per tick.
 - **16:00 ET close: watched, and nothing fired.** Position `tg-e-20260831-1030-spy` carries overnight, `hold` on every exit evaluation all day, cost-to-close 0.46–0.49 at the last two ticks against the 0.61 credit (small unrealized gain, well short of the 0.305 take-profit). No `exit_intent`, no naked leg, no orphans; `data/HALT.json` `active: false` and every `tick_completed` `ok: true` throughout. Repo: **PRIVATE** (correct, unchanged).
 - **On present marks this spread most likely exits via Thursday's force-close ladder, not via take-profit.** That ladder is now covered at every rung (PR #24) and rehearsable before its date with `loop.py --as-of` — see Operating notes.
-- **284 tests pass**, up from 155 as of Sunday.
+- **317 tests pass** as of Tue 1 Sep, up from 284 on Monday and 155 on Sunday.
 - **X1 landed tonight (`ac714be`): `fixed_quantity` 1 -> 2**, with partial-fill handling on every order path. PK's call, taken after seeing the arithmetic. Worth recording that the per-trade cap cannot be reached by sizing alone: at the $5 width and the 10%-of-width credit floor, the worst case a qty-2 position can carry is $900 against the $1,000 cap, and two of them are $1,800 against the $3,000 open-risk cap. Every gate still binds. Rollback is one value in `governance.json`.
 - **What qty 2 does and does not buy.** Max profit across two positions rises from $122 to $244 on a $100k account -- 0.24%. Capital at risk rises from $878 to $1,800. Credit/width tracks ~0.8 x short delta (verified live 26 Aug), so the arithmetic edge is roughly zero minus the bid-ask: this is 4x variance, not 4x edge, and it raises the chance the submitted P&L is negative rather than a small positive. Recorded here so the write-up and the deck say the same thing.
 - **Next watch point: tomorrow's 10:30 ET entry window.** SPY is at its per-underlying cap, so this is the first live exercise of `f7b74b9`'s position-aware routing — the model should be offered QQQ instead of SPY, or no call made at all. Never yet seen live.
@@ -148,7 +148,9 @@ Operational notes for anyone doing history surgery on this repo again: **`git pu
 
 ## Deliverables still outstanding
 
-Demo URL (not deployed — no deploy config found in the repo), video, write-up, and the deck fixes above. Cover (#12) is done. Social posts: 1 of 5 as of Sunday's audit, and that one post may predate the eligible window — unverified since.
+**Demo URL is live and is not outstanding** — https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/ , recorded in `README.md` and `submission/WRITEUP.md` by PR #32 (merged `0641df9`) and verified 1 Sep in a headless browser with no Streamlit account: it renders anonymously, no sign-in. Do not re-file it as missing. A cookie-less `curl -L` reads its 303 as a login wall and is wrong.
+
+Still outstanding: video (shots 1–7 recordable now, shot 8 needs Thursday's flat book), the Results placeholders, and the remaining deck staleness — `7ad6ac9` corrected three claims (DTE band, VRP gate, contract count), more remain. Cover (#12) is done. **Social: 0 of 5 eligible posted.** Post 01 went out 27 Aug, one day before the 28 Aug 11:00 ET kick-off, so it is outside the window and must not be submitted; drafts 02–06 sit in `social/drafts/`.
 
 ---
 
