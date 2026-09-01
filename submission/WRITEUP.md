@@ -6,15 +6,15 @@ every order placed by the agent, none by a human.
 
 ## The problem this solves
 
-Alpaca shipped their paper-trading skills on 25 August. Their own guidance requires
-**human confirmation before every order**, and five operations demand it regardless of
-the unattended-mode setting. That is incompatible with the autonomous agent this
-hackathon asks for. A cron at 10:30 on a Tuesday has nobody to ask.
+Alpaca shipped its paper-trading skills on 25 August. The docs require human
+confirmation before every order, and five operations demand it even in unattended
+mode. That breaks the autonomous-agent brief this hackathon set — a cron job at
+10:30 on a Tuesday has no one to ask.
 
-**Our answer:** a confirmation is two things wearing one name — *legibility* (showing
-what is about to happen) and *authority* (deciding whether it may). Alpaca automates away
-the second whenever a human is absent and replaces it with an assertion that fails
-closed. Theta Gate does the same, with **21 assertions instead of one**.
+A "confirmation" is really two things: seeing what's about to happen, and deciding
+whether it's allowed. Alpaca drops the second part whenever no human is around and
+swaps in a fail-closed assertion. Theta Gate does the same thing, just with 21
+assertions instead of one.
 
 ## AI logic
 
@@ -26,25 +26,27 @@ ClaudeAgentOptions(system_prompt=…, model=…, max_turns=1,
                    strict_mcp_config=True, setting_sources=[])
 ```
 
-Zero tools. Zero MCP servers. One turn. It sees only the scalar market numbers already
-computed for the gates — no chain, no news, no credential — and returns exactly five
-fields: `underlying`, `direction`, `confidence`, `thesis`, `invalidation`.
+No tools, no MCP servers, one turn. It only sees the scalar market numbers already
+computed for the gates, and returns five fields: `underlying`, `direction`,
+`confidence`, `thesis`, `invalidation`.
 
-**Why no tools rather than a read-only allowlist:** an allowlist still holds a network
-client and must stay correct forever. `tools=[]` cannot reach anything, and
-`strict_mcp_config=True` means a stray `.mcp.json` cannot quietly re-arm it. The breach
-is *unreachable*, not forbidden by a prompt — and a test asserts it.
+Why not a read-only allowlist instead of zero tools? An allowlist still holds a
+live network client that has to stay correct forever. `tools=[]` can't reach
+anything, and `strict_mcp_config=True` stops a stray `.mcp.json` from quietly
+re-arming it. A test asserts this — the breach isn't forbidden by a prompt, it's
+unreachable.
 
-Any failure — malformed JSON, schema violation, timeout, or a thesis reading back an
-injected instruction — produces no proposal and never an exception.
+Any failure — bad JSON, a schema violation, a timeout, a thesis that echoes an
+injected instruction — kills the proposal instead of raising an exception.
 
-**What the model does not do:** pick a strike, an expiry, a price, a size, or hold a
-credential. A bearish proposal is NO_TRADE, never a call-side substitution.
+The model never picks a strike, expiry, price, or size, and never holds a
+credential. A bearish read comes back NO_TRADE, not a call-side swap.
 
 ## Risk gates
 
-`risk.py` is pure functions — no I/O, no network, `now` injected. **First rejection wins
-and is final**; no gate is re-evaluated after a veto, and no model call sits downstream.
+`risk.py` is pure functions: no I/O, no network, `now` passed in. First rejection
+wins and is final — no gate gets re-checked after a veto, and nothing downstream
+calls the model again.
 
 | Group | Gates |
 |---|---|
@@ -55,51 +57,58 @@ and is final**; no gate is re-evaluated after a veto, and no model call sits dow
 | Exposure | max loss per trade; total open risk; ≤ 2 concurrent, ≤ 1 per underlying; buying power ≥ $25k *and* ≥ 5× max loss |
 | Drawdown | −1% on the day, or equity ≤ $98k → no new entries. Neither closes a position; exits stay on their own signals |
 
-Every number lives in `governance.json`, rendered verbatim on the dashboard. No LLM can
-write to it — `brain.py` cannot import the broker, and a test walks its AST to prove it.
+Every number lives in `governance.json` and shows up unchanged on the dashboard.
+No LLM can write to it: `brain.py` can't import the broker, and a test walks the
+AST to prove it.
 
 ## Alpaca infrastructure
 
 **The CLI is the integration.** Every broker call shells out through `alpaca.py`,
-including `order submit --order-class mleg` for the two-leg vertical. `alpaca-py` is
-excluded from `requirements.txt` on purpose.
+including `order submit --order-class mleg` for the two-leg vertical. `alpaca-py`
+is left out of `requirements.txt` on purpose.
 
-**The MCP server places nothing.** A separate scheduled job reconciles the broker's own
-positions and orders against the journal: two read tools allowed, all ten write tools
-denied by name, non-zero exit on a mismatch. The component that verifies the books is not
-the one that writes them.
+**The MCP server places nothing.** A separate scheduled job reconciles the
+broker's positions and orders against the journal — two read tools allowed, all
+ten write tools denied by name, non-zero exit on any mismatch. The thing that
+checks the books isn't the thing that writes them.
 
-**Durability without a database.** A deterministic `client_order_id` is looked up before
-every submit — Alpaca rejects a duplicate with 422 rather than creating a second order,
-and that is the whole mechanism. The broker is the source of truth, refetched each tick.
-The journal is append-only JSONL, written *before* the network call that might submit,
-git-committed every tick and replayed into SQLite under a SHA-256 hash chain.
+**Durability without a database.** A deterministic `client_order_id` gets looked
+up before every submit, so Alpaca rejects a duplicate with a 422 instead of
+creating a second order. That's the whole mechanism. The broker stays the source
+of truth, refetched every tick. The journal itself is append-only JSONL, written
+before the network call that might place an order, committed to git each tick,
+and replayed into SQLite under a SHA-256 hash chain.
 
 ## Results
 
-Realised P&L **[P&L]** · **[n]** trades · win rate **[%]** · max drawdown **[%]** across
-**[s]** sessions.
+Realised P&L **[P&L]** · **[n]** trades · win rate **[%]** · max drawdown **[%]**
+across **[s]** sessions.
 
-**What [n] trades cannot show:** edge. Swept from 0.15 to 0.45 delta, expected value is
-negative in every case by precisely the bid-ask cost — delta *is* the risk-neutral
-probability, so a fairly priced chain cannot yield edge by arithmetic.
+What [n] trades can't show: edge. Swept from 0.15 to 0.45 delta, expected value
+comes out negative every time, by exactly the bid-ask cost. Delta is the
+risk-neutral probability, so a fairly priced chain can't yield edge by
+arithmetic alone.
 
-**What it can show:** that the guard held. Which gates fired and how often, that no order
-was placed outside them, that max loss was capped at entry by construction, and that the
-history is reconstructable from a hash-chained journal the agent wrote itself.
+What it can show: that the guard held. Which gates fired, how often, that no
+order slipped through outside them, that max loss was capped at entry by
+construction, and that the whole history can be rebuilt from a hash-chained
+journal the agent wrote itself.
 
 ## Disclosures and limitations
 
-- **VRP thresholds were re-based on 30 Aug with Friday's marks in view** — window 20 → 10
-  days, margin 2.0 → 1.0 points, because the 20-day window still carried the early-August
-  rally and vetoed every candidate. Chosen while looking at the data it would be applied to.
-- **Commit `96fd434` (1,049 lines) landed 3h40m before kickoff.** The account is fresh and
-  every trade is inside the window; the scaffolding was not.
-- **Three `mcp_reconciliation_failed` rows sit in the journal at 16:41–16:42 ET on 31 Aug**
-  — dev runs made before that job sandboxed its own journal, caught the same hour. They
-  stay: the trail is append-only, which is what makes it worth trusting.
-- **The agent filters; it does not select.** All 21 gates answer *should I trade*, none
-  *what should I trade* — `bullish` and `neutral` resolve to the same put spread.
-- **No automated single-leg repair.** A naked leg HALTs and journals CRITICAL for a human.
-- **Paper fills are optimistic** — indicative quotes, no NBBO size check. Measured
+- VRP thresholds were re-based on 30 Aug with Friday's marks already in view:
+  window went 20 → 10 days, margin 2.0 → 1.0 points, because the 20-day window
+  still carried the early-August rally and vetoed every candidate. Chosen while
+  looking at the data it would be applied to.
+- Commit `96fd434` (1,049 lines) landed 3h40m before kickoff. The account is
+  fresh and every trade is inside the window; the scaffolding was not.
+- Three `mcp_reconciliation_failed` rows sit in the journal at 16:41–16:42 ET on
+  31 Aug: dev runs made before that job sandboxed its own journal, caught in the
+  same hour. They stay — the trail is append-only, which is the point.
+- The agent filters, it doesn't select. All 21 gates answer *should I trade*,
+  none *what should I trade* — `bullish` and `neutral` resolve to the same put
+  spread.
+- No automated single-leg repair. A naked leg HALTs and journals CRITICAL for a
+  human.
+- Paper fills are optimistic: indicative quotes, no NBBO size check. Measured
   performance is biased upward.
