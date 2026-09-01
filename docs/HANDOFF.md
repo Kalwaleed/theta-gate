@@ -1,153 +1,158 @@
 # Handoff — Theta Gate
 
-**One-shot pickup document. Read it, act on it, then it is done.** Do not
-update this file as the day moves. Put rolling state in `docs/STATUS.md`.
-Put team-facing state in `docs/TEAM-BRIEF.md`.
+**One-shot pickup document — read it, act on it, then it is done.** Do not
+update this file as the day goes on. Put running state in `docs/STATUS.md`,
+and put the team-facing snapshot in `docs/TEAM-BRIEF.md`.
 
-**Written Tue 1 Sep 2026, 15:01 ET (22:01 Riyadh).** Deadline: **submission
-Fri 4 Sep, 11:00 ET.**
+**Written Tue 1 Sep 2026, 15:20 ET (22:20 Riyadh).** Written because the
+session that held the Wednesday watcher is closing.
+**Submission closes Fri 4 Sep, 11:00 ET.**
 
 **Verify before you trust this file** — `git log --oneline -5`,
-`.venv/bin/python3 -m pytest -q`, `gh pr list`, `git status`. If the repo
-disagrees with this file, the repo is right.
+`.venv/bin/python3 -m pytest -q`, `gh pr list`, `git status`,
+`cat data/HALT.json`. If the repo disagrees, the repo is right.
 
 ---
 
-## Do this first — arm the Wednesday watcher
+## Do this first
 
-Nothing is armed. Checked at 15:01 ET: `pgrep -fl wed_watch.sh` returns
-nothing. A Monitor armed inside a session dies with that session, which is why
-the script exists. Re-arm it:
+**Re-arm the Wednesday watcher. The previous one died with its session.**
+`Monitor` and `CronCreate` both live in memory only. The script itself is now
+in the repo and survives:
 
 ```bash
-nohup scripts/wed_watch.sh > /tmp/wed_watch.log 2>&1 &
+bash scripts/wed_watch.sh          # sleeps until Wed 2 Sep 09:28 ET, then reports
 ```
 
-Or run it in a background Bash tool call. The script is safe to start at any
-time: it sleeps until Wed 2 Sep 09:28 ET, and it exits with `MISSED` instead
-of firing late if the date has already passed.
+Run it in the background from the new session (Monitor, or `run_in_background`).
+It refuses to fire late: if the date is already past Wed 2 Sep it prints
+`MISSED` and exits.
 
-**Why 09:30 and not 10:30** — three reasons, all still true:
+It reports three things:
 
-1. The credit-gate veto is predictable at 09:36, and there is no second
-   window if it vetoes.
-2. An exit can fire on any tick. A stop-out frees a position slot and changes
-   what the 10:30 window can do.
-3. The first tick of the day is the overnight integrity check — assignment,
-   untracked broker position, orphan leg.
+1. **09:28 ET** — one line to confirm it woke.
+2. **~09:36 ET** — the credit-quality reading on the live 3–5 DTE band for
+   SPY and QQQ, with each gate verdict. This is ~55 minutes of warning before
+   the window.
+3. **09:36 → 10:52 ET** — proposals, vetoes, fills, any `exit_evaluated` with
+   a signal other than `hold`, HALT, assignment, orphans, submit failures.
 
-**What the script prints** — the market-open line at 09:28, the live
-credit-quality reading at 09:36 for both underlyings with each gate verdict,
-then every proposal, veto, fill, non-`hold` exit signal, HALT and fault event
-until 10:52 ET.
+**Why from the open and not from 10:30:** an exit can fire on any tick, and a
+stop-out on either leg frees a slot that changes what 10:30 can do.
 
 ---
 
-## State right now
+## The book, right now
 
-| Item | Value |
+| Position | Structure | Qty | Credit | Cost to close | Unrealised | Stop |
+|---|---|---|---|---|---|---|
+| `tg-e-20260831-1030-spy` | SPY 754/749P, exp 9 Sep | 1 | 0.61 | 0.95 | **−$34** | 1.22 |
+| `tg-e-20260901-1030-qqq` | QQQ 699/694P, exp 4 Sep | 2 | 0.59 | 0.90 | **−$62** | 1.18 |
+
+**Total unrealised −$96** on a $100,000 account (−0.10%). Both read `hold` at
+the 14:58 ET tick. `HALT.json` inactive, no orphans, every tick green.
+
+**Watch QQQ.** It touched 1.11 at 14:46 ET against a 1.18 stop — inside 7
+cents of a stop-out. It has since eased to 0.90. **QQQ expires Fri 4 Sep, so
+it has 3 DTE and the least time to recover.** SPY expires 9 Sep and never got
+closer than 1.08 against 1.22.
+
+The −1% daily drawdown halt is about $900 away. That halt blocks new entries
+only. It never closes a position.
+
+Book is at capacity — 2 concurrent, 1 per underlying — so **no entry was
+possible Tuesday afternoon and none is possible until a slot frees.**
+
+---
+
+## Repo state
+
+`main` at `7ad6ac9` · **0 open PRs** · **309 tests passing** · working tree
+clean · repo still PRIVATE, flips public Thu 3 Sep 17:00 ET (automated,
+`.github/workflows/go-public.yml`, write path verified).
+
+---
+
+## The one live risk at Wednesday's window
+
+**`gate_credit_quality` may veto the proposal, and that is the gate working,
+not a fault.** At $5 wide the headroom is about 8 points against its 40%
+deviation limit (it was ~26 at $2 wide). If it vetoes, the hackathon ends with
+two trades instead of three. Do not touch `governance.json` to force a third
+trade — the settings are closed decisions, listed in `docs/TEAM-BRIEF.md`.
+
+---
+
+## Then, in order
+
+| When | What |
 |---|---|
-| Branch | `main` at `0641df9`, clean, nothing unpushed |
-| Tests | **317 pass** |
-| HALT | inactive |
-| Open PRs | **none** |
-| Journal | 268 events, chain intact, 4 sessions |
-| Positions | **2 of 2 — at capacity** |
-| Realised / unrealised | **$0.00 / -$118.00** |
-
-**Book at the 14:52 ET tick. Both `hold`, both moved against us today:**
-
-| Position | Legs | Qty | Credit | Mark | Stop | To stop | Unrealised | DTE |
-|---|---|---|---|---|---|---|---|---|
-| `tg-e-20260831-1030-spy` | 754P / 749P | 1 | 0.61 | **1.01** | 1.22 | 0.21 | -$40 | 8 |
-| `tg-e-20260901-1030-qqq` | 699P / 694P | 2 | 0.59 | **0.98** | 1.18 | 0.20 | -$78 | 3 |
-
-**This is the number that changed since the last handoff.** The marks were
-0.84 and 0.73 at 12:44 ET. Both are now about 83% of the way to their stops
-(`stop_close_debit_multiple: 2.0`, so 2x credit). Neither has triggered, and
-the loop signalled `hold` on both at 14:52. **Expect a stop-out to be the most
-likely Wednesday event, not an entry** — and a stop-out frees a slot, which is
-the second reason the watcher starts at 09:28 rather than 10:28.
-
-Both sit at capacity, so **Wednesday's 10:30 window can only enter if one of
-these exits first.**
+| Wed 2 Sep 10:45 ET | Entries close permanently. Nothing more to enter. |
+| Thu 3 Sep 14:30 ET | Force-close ladder runs. Book must end flat. Watch all four rungs: 14:30 mid → 15:00 cross → 15:30 `market_mleg` capped at width−0.01 → 15:45 reconcile and alert. |
+| Thu 3 Sep, after flat | **One sitting, one source:** fill `deck/theta-gate.tex:422-425` (4 `\PLACEHOLDER` stats), the Results placeholders in `submission/WRITEUP.md`, and the bracketed numbers in `social/drafts/06-results-and-flat.md`. |
+| Thu 3 Sep 17:00 ET | Repo flips public (automated). |
+| Fri 4 Sep 11:00 ET | Submission closes. |
 
 ---
 
-## Landed today — do not redo
+## Still outstanding, not done
 
-| What | Where |
-|---|---|
-| Unrealised P&L on open positions, from the `exit_evaluated` mark | PR **#31**, merged `5900e9f` |
-| Mark cell carries its timestamp in a `title` | `8448127` |
-| Unrealised card dated by its **stalest** open mark | `f8a641f` |
-| Demo URL recorded in README, write-up, this file | PR **#32**, merged `0641df9` |
-
-The dashboard rendered `--` under P&L for both open positions until #31. The
-cause was `store.py` reading `close_debit` off `exit_filled` only, which does
-not exist until a position closes, while `loop.py` had been journaling
-`cost_to_close` on every tick all along.
-
-**PR #32 also claimed the demo was behind a login wall. It was not** — see the
-Demo URL section. That claim was removed from this file and from the PR before
-merge. Do not re-file it.
-
----
-
-## Decisions already closed — do not re-open
-
-| Decision | Value | Ground |
-|---|---|---|
-| Spread width | **$5** | Dollar bid-ask is flat across widths while credit scales with width; the entry ladder inverts below ~$4.6 because of `ENTRY_CONCESSION_FLOOR_DOLLARS` |
-| Tenor | **3–5 DTE**, `time_exit_dte: 1` | Merged from PR #27's tenor half |
-| Sizing | **qty 2 fixed** | PR #27's confidence-sizing half rejected; PR #26 closed |
-| VRP gate | lookback 10 days, `min_vrp_points` 1.0 | 30 Aug option C |
-| Public flip | **Thu 3 Sep 17:00 ET** | Automated, `go-public.yml`, write path verified |
-| Manual trading | **never** | The account history is the judges' evidence of autonomy |
-
-**Credit is tenor-invariant at fixed delta.** $0.61 at both 6–9 DTE and 3–5
-DTE, measured live. Do not re-derive this from √T — that reasoning applies to
-a fixed strike, not to a delta-matched vertical.
-
-**`plan.credit` is a mid, not a fill.** Measured friction is **6.35%**, not
-2.5%. Any gross ratio quoted without `friction_ratio` applied is optimistic.
+- **Video not recorded.** Shot list and spoken script are at
+  `submission/VIDEO-SCRIPT.md`. Shots 1–7 are recordable now; shot 8 needs
+  Thursday's flat book. The script carries a do-not-film list (`.env`, a
+  filled-in `env.example`, `alpaca doctor` output, GitHub secrets pages).
+  The archived rules contain **no duration rule** — 3:00 is our own target.
+- **Deck is stale on at least two counts** and needs a correction pass before
+  Thursday. `7ad6ac9` fixed three claims; more remain.
+- **Demo URL** — no deploy config exists. Floor is a screen recording;
+  Streamlit deploy after Thursday's public flip if there is time.
+- **Social — 0 of 5 eligible.** Post 01 went out 27 Aug, one day before the
+  28 Aug 11:00 ET kick-off, so it is outside the window and must not be
+  submitted. Five drafts sit in `social/drafts/02-06`. **PK posts. The agent
+  never posts.**
+- **`ENTRY_CONCESSION_FLOOR_DOLLARS`** (`loop.py:71`) is an absolute $0.50, so
+  `width_dollars` is not really one governance value. **Fix after the
+  deadline, not before.**
 
 ---
 
-## Still outstanding
+## Binding decisions — do not reopen
 
-- **Thu 3 Sep, after the 14:30 force-close** — fill four `\PLACEHOLDER`
-  stats in `deck/theta-gate.tex:422-425`, the Results placeholders in
-  `submission/WRITEUP.md`, and the bracketed numbers in
-  `social/drafts/06-results-and-flat.md`. Do all of them in one sitting.
-- **Video not recorded.** Shots 1–7 are recordable now. Shot 8 needs the flat
-  book. Script and do-not-film list: `submission/VIDEO-SCRIPT.md`.
-- **Deck is stale on at least two counts** — needs a correction pass before
-  Thursday.
-- **Social: 0 of 5 drafts posted.** Drafts are in `social/drafts/`. **PK
-  posts, the agent never posts.**
-- **`ENTRY_CONCESSION_FLOOR_DOLLARS` width coupling** — fix after the
-  deadline, not before.
+- **Width stays $5.** Closed on 208 quote observations and five agent reviews.
+  See `docs/TEAM-BRIEF.md` for the two findings that decide it.
+- **Tenor is 3–5 DTE**, `time_exit_dte` 1. Credit is tenor-invariant at fixed
+  delta, so the shorter tenor is free decay capture.
+- **Rejected: aggressive sizing** (33 contracts, −6% halt) and
+  **confidence-based sizing** (the model returns a near-constant 0.60–0.62).
+- **VRP option C** — `realised_vol_lookback_days` 10, `min_vrp_points` 1.0.
+- **Never trade the submission account by hand.** Its history is the judges'
+  evidence of autonomy.
+- **Public flip Thu 3 Sep 17:00 ET**, one day before the deadline.
 
 ---
 
 ## Gotchas — do not re-derive
 
-- **A peer Claude session shares this worktree.** Never `git stash`. Commit
-  only your own staged paths. `git pull --rebase` fails when their
-  uncommitted work is present.
+- **`Monitor` and `CronCreate` are session-only.** Nothing is written to disk;
+  both die when the session ends. This is why the watcher script now lives in
+  `scripts/`.
+- **A peer Claude session may share this worktree.** Never `git stash` — you
+  will take their uncommitted work. Commit only your own paths by name.
+- **`plan.credit` is `short.mid − long.mid`** — a MID credit, never a fill.
+  Tuesday's real slippage was **6.35%**, not 2.5%.
 - **`alpaca doctor --profile X` silently ignores the flag.** Everything else
   routes through the `ALPACA_PROFILE` env var.
-- **`ALPACA_ACCOUNT_ID` is the UUID**, not the account number.
+- **`ALPACA_ACCOUNT_ID` is the UUID, not the account number.**
 - **A duplicate `client_order_id` returns HTTP 422, never a second order.**
-  This is the whole idempotency mechanism.
-- **GitHub secrets and variables are separate namespaces.** `secrets.X`
-  resolves to empty, silently, when X is a variable.
-- **`.mcp.json` needs `fastmcp==3.2.0` pinned.** A fresh `uvx` resolve
-  breaks `alpaca-mcp-server` 2.3.0.
-- **The Read tool flags `brain.py` as injection.** False positive — it
-  matches that file's own defence list at lines ~54-66.
-- Use `.venv/bin/python3`, never system `python3`.
+  That is the whole idempotency mechanism.
+- **`.mcp.json` must keep `fastmcp==3.2.0` pinned.** A fresh `uvx` resolve of
+  `alpaca-mcp-server==2.3.0` dies without it.
+- **GitHub secrets and variables are separate namespaces** — `secrets.X`
+  resolves to empty in silence when X is a variable.
+- **The `Read` tool's injection scanner flags `brain.py`.** False positive —
+  it matches that file's own `_INJECTION_MARKERS` defence list.
+- **A Streamlit Cloud public app still 303s to auth for cookie-less curl.**
+  That is not a login wall.
 
 ---
 
@@ -155,44 +160,23 @@ a fixed strike, not to a delta-matched vertical.
 
 | File | What |
 |---|---|
-| `docs/TEAM-BRIEF.md` | The distributable snapshot — regenerate it, never append |
-| `docs/STATUS.md` | Rolling log of live-trading events |
-| `docs/ANALYSIS-2026-08-30.md` | The 157-agent Sunday audit, every finding with severity |
-| `submission/WRITEUP.md` | PK's own prose, 941 words. Do not rewrite it |
-| `submission/VIDEO-SCRIPT.md` | 8 shots, 3:00 target, do-not-film list |
+| `docs/TEAM-BRIEF.md` | Team-facing snapshot — config, closed decisions, timeline. Regenerated, never appended. |
+| `docs/STATUS.md` | Rolling history and the reasoning behind every decision. |
+| `docs/STRATEGY-REVIEW-2026-09-01.md` | Why the agent filters but does not select. |
+| `docs/ANALYSIS-2026-08-30.md` | Sunday's full audit, every finding with severity. |
+| `governance.json` | Every threshold. No LLM can write to it. |
 
 ## Operating notes
 
 ```bash
 set -a; source .env; set +a
-.venv/bin/python3 loop.py --once --dry-run --profile submission  # local tick, no broker writes
-PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py        # read-only gate diagnostic
-PYTHONPATH=. .venv/bin/python3 scripts/measure_credit_curve.py   # read-only credit curve
-ALPACA_PROFILE=submission alpaca order get --order-id <id>       # raw broker order
+.venv/bin/python3 loop.py --once --dry-run --profile submission   # local tick, no broker writes
+PYTHONPATH=. .venv/bin/python3 scripts/live_gate_check.py         # read-only gate diagnostic
+PYTHONPATH=. .venv/bin/python3 scripts/measure_credit_curve.py    # read-only credit curve
+ALPACA_PROFILE=submission alpaca order get --order-id <id>        # raw broker order
 ```
 
-Kill switch: `data/HALT.json` → `active: true`.
-Repo: `github.com/Kalwaleed/theta-gate` (private until Thu 3 Sep 17:00 ET).
+Use `.venv/bin/python3`, never system `python3`. Kill switch:
+`data/HALT.json` → `active: true`.
 
----
-
-## Demo URL
-
-**https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/**
-
-Public, anonymous, and rendering. Verified 1 Sep in a headless browser with no
-Streamlit account: the dashboard loads, no sign-in, and the Unrealised card
-reads its value from the committed journal.
-
-**Do not verify this with plain `curl -L`.** Streamlit Cloud answers the first
-anonymous request to *any* app — public ones included — with
-`303 -> share.streamlit.io/-/auth/app`, which sets a session cookie and bounces
-back. A client that keeps no cookies follows that into `/-/login?payload=...`
-and reads as a login wall. `curl -sL -c jar -b jar <url>` returns 200; a browser
-renders the page. This produced one false submission-blocking report already.
-
-The app content also sits in an iframe (`/~/+/`), so a top-level DOM query
-finds only the Streamlit host chrome. Screenshot it instead.
-
-Sharing is set to *"This app is public and searchable"*. Worth one browser check
-after Thursday's repo flip, in case the visibility setting resets with it.
+Repo: `github.com/Kalwaleed/theta-gate` (private, 6 collaborators).
