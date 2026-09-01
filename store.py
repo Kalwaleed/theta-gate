@@ -61,7 +61,7 @@ ET = ZoneInfo("America/New_York")
 JOURNAL_PATH = "data/journal.jsonl"
 DB_PATH = "data/theta_gate.db"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Fixed no_trade reasons emitted by loop.py that are NOT risk-gate vetoes.
 # A gate veto arrives as the gate's own return string, shaped
@@ -143,6 +143,14 @@ CREATE TABLE positions (
     close_debit     REAL,
     exit_order_id   TEXT,
     realised_pnl_dollars REAL,
+    -- Latest mark for a still-open position, from the most recent
+    -- exit_evaluated row. loop.py writes one of these every tick while a
+    -- position is open, so the current cost-to-close was already in the
+    -- journal -- the dashboard was rendering "--" for P&L on open
+    -- positions while the number sat one query away.
+    latest_mark     REAL,
+    latest_mark_ts  TEXT,
+    unrealised_pnl_dollars REAL,
     status          TEXT NOT NULL
 );
 
@@ -318,6 +326,18 @@ def _build_positions(conn):
     than loop.py here -- divergence is the bug this design exists to
     prevent.
     """
+    # Most recent mark per position. loop.py journals exit_evaluated every
+    # tick it holds an open position, and that row carries cost_to_close --
+    # so the current value was already in the journal while the dashboard
+    # rendered "--" for P&L on every open position.
+    marks = {}
+    for row in conn.execute(
+        "SELECT ts, payload FROM events WHERE event = 'exit_evaluated' ORDER BY seq"
+    ):
+        obj = json.loads(row["payload"])
+        if obj.get("position_id") and obj.get("cost_to_close") is not None:
+            marks[obj["position_id"]] = (row["ts"], obj["cost_to_close"])
+
     entries, exits, partials = {}, {}, {}
     for row in conn.execute(
         "SELECT seq, ts, event, payload FROM events"
@@ -350,6 +370,13 @@ def _build_positions(conn):
             legs = partial_legs + [(debit, final_qty)]
             if all(d is not None and q is not None for d, q in legs):
                 pnl = round(credit * 100 * qty - sum(d * 100 * q for d, q in legs), 2)
+        mark_ts, mark = marks.get(pid, (None, None))
+        unrealised = None
+        if pid not in exits and mark is not None and None not in (credit, qty):
+            # Same arithmetic as realised P&L: credit received minus what it
+            # would cost to close now, per contract, x100.
+            unrealised = round((credit - mark) * 100 * qty, 2)
+
         rows.append((
             pid, entry_seq, exit_seq,
             e.get("underlying"), e.get("direction"), e.get("trade_date"),
@@ -357,15 +384,17 @@ def _build_positions(conn):
             e.get("width"), qty, credit, e.get("max_loss_dollars"),
             entry_ts, e.get("order_id"),
             exit_ts, x.get("reason"), debit, x.get("order_id"),
-            pnl, "closed" if pid in exits else "open",
+            pnl, mark, mark_ts, unrealised,
+            "closed" if pid in exits else "open",
         ))
 
     conn.executemany(
         "INSERT INTO positions (position_id, entry_seq, exit_seq, underlying, direction,"
         " trade_date, window, expiry, short_symbol, long_symbol, width, qty, credit,"
         " max_loss_dollars, entry_ts, entry_order_id, exit_ts, exit_reason, close_debit,"
-        " exit_order_id, realised_pnl_dollars, status)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " exit_order_id, realised_pnl_dollars, latest_mark, latest_mark_ts,"
+        " unrealised_pnl_dollars, status)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         rows,
     )
 
@@ -565,7 +594,8 @@ def summary(conn, starting_equity=100000):
         " SUM(status='open') AS open_now,"
         " SUM(status='closed') AS closed,"
         " SUM(CASE WHEN status='closed' AND realised_pnl_dollars > 0 THEN 1 ELSE 0 END) AS wins,"
-        " COALESCE(SUM(realised_pnl_dollars), 0) AS realised"
+        " COALESCE(SUM(realised_pnl_dollars), 0) AS realised,"
+        " COALESCE(SUM(unrealised_pnl_dollars), 0) AS unrealised"
         " FROM positions"
     ).fetchone()
     chain_ok, bad_seq = verify_chain(conn)
@@ -581,6 +611,7 @@ def summary(conn, starting_equity=100000):
         "positions_closed": pos["closed"] or 0,
         "wins": pos["wins"] or 0,
         "realised_pnl_dollars": round(pos["realised"] or 0.0, 2),
+        "unrealised_pnl_dollars": round(pos["unrealised"] or 0.0, 2),
         "equity": round(starting_equity + (pos["realised"] or 0.0), 2),
         "chain_intact": chain_ok,
         "chain_first_bad_seq": bad_seq,

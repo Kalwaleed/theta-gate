@@ -475,6 +475,9 @@ def main():
         ("Equity", money(s["equity"]), f"from {money(d['start'])} start", ""),
         ("Realised P&L", money(realised, signed=True),
          f"{s['positions_closed']} closed", tone),
+        ("Unrealised", money(s["unrealised_pnl_dollars"], signed=True),
+         f"{s['positions_open']} open, marked to last tick",
+         "win" if s["unrealised_pnl_dollars"] > 0 else ("loss" if s["unrealised_pnl_dollars"] < 0 else "")),
         ("Open now", str(s["positions_open"]),
          f"cap {gov['risk']['max_concurrent_positions']}", ""),
         ("Win rate", pct(wr), f"{s['wins']} of {s['positions_closed']}"
@@ -509,7 +512,12 @@ def main():
     if d["positions"]:
         rows = []
         for p in open_pos + closed:
-            pnl = p["realised_pnl_dollars"]
+            # An open position has no realised P&L but does have a mark:
+            # loop.py journals exit_evaluated every tick it holds one.
+            # Showing "--" there hid a number the journal already had.
+            live = p["status"] == "open"
+            pnl = p["unrealised_pnl_dollars"] if live else p["realised_pnl_dollars"]
+            debit = p["latest_mark"] if live else p["close_debit"]
             cls = "tg-win" if (pnl or 0) > 0 else ("tg-loss" if (pnl or 0) < 0 else "")
             state = ('<span class="tg-tag-s acc">open</span>' if p["status"] == "open"
                      else f'<span class="tg-tag-s">'
@@ -519,10 +527,12 @@ def main():
                 f'{esc(short_ts(p["entry_ts"]))}<div class="tg-sym">exp {esc(p["expiry"] or "--")}</div>',
                 f'<span class="tg-num">{esc(str(p["qty"] if p["qty"] is not None else "--"))}</span>',
                 f'<span class="tg-num">{money(p["credit"])}</span>',
-                f'<span class="tg-num">{money(p["close_debit"])}</span>',
+                f'<span class="tg-num">{money(debit)}</span>'
+                + ('<div class="tg-sym">mark</div>' if live and debit is not None else ''),
                 f'<span class="tg-num">{money(p["max_loss_dollars"])}</span>',
                 state,
-                f'<span class="tg-num {cls}">{money(pnl, signed=True)}</span>',
+                f'<span class="tg-num {cls}">{money(pnl, signed=True)}</span>'
+                + ('<div class="tg-sym">unrealised</div>' if live and pnl is not None else ''),
             ])
         st.markdown(render_rows(
             ["Underlying", "Entered", "Qty", "Credit", "Close debit", "Max loss", "State", "P&L"],

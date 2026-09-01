@@ -624,3 +624,67 @@ def test_pre_x1_rows_without_exit_qty_still_compute_pnl(journal, db):
                                    "2026-09-03T14:35:00-04:00", debit=0.50).items() if k != "qty"})
     conn = store.rebuild(db, str(journal))
     assert conn.execute("SELECT realised_pnl_dollars FROM positions").fetchone()[0] == pytest.approx(11.0)
+
+
+def test_an_open_position_gets_a_mark_and_unrealised_pnl(journal, db):
+    """The dashboard rendered "--" for P&L on every open position while
+    the number sat one query away: loop.py journals exit_evaluated every
+    tick it holds a position, and that row carries cost_to_close.
+
+    Reported live 1 Sep -- two open positions, both underwater, both
+    showing blank."""
+    write(journal,
+          entry("p1", "SPY", "2026-08-31T10:31:00-04:00", credit=0.61, qty=1),
+          {"ts": "2026-08-31T11:00:00-04:00", "event": "exit_evaluated",
+           "position_id": "p1", "credit": 0.61, "cost_to_close": 0.50, "signal": "hold"},
+          {"ts": "2026-08-31T13:47:00-04:00", "event": "exit_evaluated",
+           "position_id": "p1", "credit": 0.61, "cost_to_close": 0.84, "signal": "hold"})
+
+    conn = store.rebuild(db, str(journal))
+    row = conn.execute("SELECT * FROM positions").fetchone()
+    assert row["status"] == "open"
+    assert row["latest_mark"] == 0.84, "must take the LATEST mark, not the first"
+    assert row["unrealised_pnl_dollars"] == -23.0
+    assert row["realised_pnl_dollars"] is None, "nothing is realised until it closes"
+
+
+def test_unrealised_scales_with_quantity(journal, db):
+    """QQQ was a 2-lot on 1 Sep. A per-contract number understates the book."""
+    write(journal,
+          entry("p2", "QQQ", "2026-09-01T10:33:00-04:00", credit=0.59, qty=2),
+          {"ts": "2026-09-01T13:47:00-04:00", "event": "exit_evaluated",
+           "position_id": "p2", "credit": 0.59, "cost_to_close": 0.74, "signal": "hold"})
+    conn = store.rebuild(db, str(journal))
+    assert conn.execute("SELECT unrealised_pnl_dollars FROM positions").fetchone()[0] == -30.0
+
+
+def test_a_closed_position_reports_realised_not_unrealised(journal, db):
+    """Once it closes, the mark is history and the realised number is the
+    truth. Showing both would double-count in the headline."""
+    write(journal,
+          entry("p3", "SPY", "2026-08-31T10:31:00-04:00", credit=0.60, qty=1),
+          {"ts": "2026-09-01T10:00:00-04:00", "event": "exit_evaluated",
+           "position_id": "p3", "credit": 0.60, "cost_to_close": 0.45, "signal": "hold"},
+          exit_("p3", "SPY", "2026-09-01T11:00:00-04:00", debit=0.30))
+    conn = store.rebuild(db, str(journal))
+    row = conn.execute("SELECT * FROM positions").fetchone()
+    assert row["realised_pnl_dollars"] == 30.0
+    assert row["unrealised_pnl_dollars"] is None
+
+
+def test_a_position_never_marked_shows_no_unrealised(journal, db):
+    """Entered but not yet evaluated -- no invented number."""
+    write(journal, entry("p4", "SPY", "2026-09-01T10:33:00-04:00"))
+    conn = store.rebuild(db, str(journal))
+    row = conn.execute("SELECT * FROM positions").fetchone()
+    assert row["latest_mark"] is None and row["unrealised_pnl_dollars"] is None
+
+
+def test_summary_separates_realised_from_unrealised(journal, db):
+    write(journal,
+          entry("p5", "SPY", "2026-08-31T10:31:00-04:00", credit=0.61, qty=1),
+          {"ts": "2026-09-01T13:47:00-04:00", "event": "exit_evaluated",
+           "position_id": "p5", "credit": 0.61, "cost_to_close": 0.84, "signal": "hold"})
+    s = store.summary(store.rebuild(db, str(journal)))
+    assert s["realised_pnl_dollars"] == 0.0, "an open loss is not realised"
+    assert s["unrealised_pnl_dollars"] == -23.0
