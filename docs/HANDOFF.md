@@ -64,24 +64,6 @@ Neither is near its stop (1.22 SPY, 1.18 QQQ). Both sit at capacity, so
 
 ---
 
-## Blocking item — needs PK, not scriptable
-
-**The Streamlit dashboard is behind a login wall.** A judge who opens the
-demo URL gets a Streamlit sign-in page, not the dashboard. PR #32 documents
-it with the verified 303 redirect chain.
-
-App visibility is a **separate setting from repo visibility**. Thursday's
-automated repo flip will not fix it.
-
-**Fix, about 30 seconds:** share.streamlit.io → the app → **Settings →
-Sharing** → *"This app is public and searchable"*. Then load it in a private
-browser window and confirm it renders.
-
-Until this is done the entry effectively has no working hosted demo, which
-the rules list as a required submission field.
-
----
-
 ## Decisions already closed — do not re-open
 
 | Decision | Value | Ground |
@@ -161,3 +143,22 @@ ALPACA_PROFILE=submission alpaca order get --order-id <id>       # raw broker or
 
 Kill switch: `data/HALT.json` → `active: true`.
 Repo: `github.com/Kalwaleed/theta-gate` (private until Thu 3 Sep 17:00 ET).
+
+---
+
+## Demo URL
+
+**https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/**
+
+Public, anonymous, and rendering. Verified 1 Sep in a headless browser with no
+Streamlit account: the dashboard loads, no sign-in.
+
+**Do not verify this with plain `curl -L`.** Streamlit Cloud answers the first
+anonymous request to *any* app -- public ones included -- with
+`303 -> share.streamlit.io/-/auth/app`, which sets a session cookie and bounces
+back. A client that keeps no cookies follows that into `/-/login?payload=...`
+and reads as a login wall. `curl -sL -c jar -b jar <url>` returns 200; a browser
+renders the page. This produced one false submission-blocking report already.
+
+Sharing is set to *"This app is public and searchable"*. Worth one browser check
+after Thursday's repo flip, in case the visibility setting resets with it.

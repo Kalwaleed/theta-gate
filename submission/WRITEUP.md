@@ -4,6 +4,8 @@
 Alpaca paper account `7a013821-9249-4505-8025-fb298f0931a5` · $100,000 ·
 every order placed by the agent, none by a human.
 
+Live dashboard: https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/
+
 ## The problem this solves
 
 Alpaca shipped its paper-trading skills on 25 August. The docs require human
