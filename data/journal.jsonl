@@ -238,3 +238,7 @@
 {"ts": "2026-09-01T13:41:31.889977-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260901-1030-qqq", "underlying": "QQQ", "credit": 0.59, "cost_to_close": 0.72, "dte": 3, "signal": "hold"}
 {"ts": "2026-09-01T13:41:32.123550-04:00", "event": "no_trade", "reason": "all_underlyings_at_cap"}
 {"ts": "2026-09-01T13:41:32.123672-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 2, "entry_attempted": true}
+{"ts": "2026-09-01T13:47:37.461620-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260831-1030-spy", "underlying": "SPY", "credit": 0.61, "cost_to_close": 0.84, "dte": 8, "signal": "hold"}
+{"ts": "2026-09-01T13:47:37.672173-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260901-1030-qqq", "underlying": "QQQ", "credit": 0.59, "cost_to_close": 0.74, "dte": 3, "signal": "hold"}
+{"ts": "2026-09-01T13:47:37.876215-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-01T13:47:37.876331-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 2, "entry_attempted": false}
