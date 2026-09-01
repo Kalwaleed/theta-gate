@@ -183,29 +183,19 @@ Repo: `github.com/Kalwaleed/theta-gate` (private, 6 collaborators).
 
 ---
 
-## Demo URL — one setting still needs changing
+## Demo URL
 
 **https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/**
 
-Deployed and rendering, but **currently behind a login wall**. Verified 1 Sep:
+Public, anonymous, and rendering. Verified 1 Sep in a headless browser with no
+Streamlit account: the dashboard loads, no sign-in.
 
-```
-GET /      -> 303
-location:  https://share.streamlit.io/-/auth/app?redirect_uri=...
-then       -> /-/login?payload=...
-```
+**Do not verify this with plain `curl -L`.** Streamlit Cloud answers the first
+anonymous request to *any* app -- public ones included -- with
+`303 -> share.streamlit.io/-/auth/app`, which sets a session cookie and bounces
+back. A client that keeps no cookies follows that into `/-/login?payload=...`
+and reads as a login wall. `curl -sL -c jar -b jar <url>` returns 200; a browser
+renders the page. This produced one false submission-blocking report already.
 
-A judge opening it sees a Streamlit sign-in page, not the dashboard. The
-hackathon requires a working Application URL, so as it stands the entry
-effectively has no demo.
-
-**Cause:** the app was deployed from a private repo, so Streamlit Cloud
-defaulted the *app* to private. **App visibility is a separate setting from
-repo visibility — Thursday's automated repo flip will not fix this.**
-
-**Fix (PK, ~30 seconds):** share.streamlit.io → the app → **Settings → Sharing**
-→ set to **"This app is public and searchable"** (or *anyone with the link*).
-Then confirm in a private browser window that it loads without signing in.
-
-Do this before Friday, and re-check it after Thursday's repo flip in case the
-visibility change resets.
+Sharing is set to *"This app is public and searchable"*. Worth one browser check
+after Thursday's repo flip, in case the visibility setting resets with it.
