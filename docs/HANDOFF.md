@@ -46,18 +46,18 @@ stop-out on either leg frees a slot that changes what 10:30 can do.
 
 | Position | Structure | Qty | Credit | Cost to close | Unrealised | Stop |
 |---|---|---|---|---|---|---|
-| `tg-e-20260831-1030-spy` | SPY 754/749P, exp 9 Sep | 1 | 0.61 | 0.95 | **−$34** | 1.22 |
-| `tg-e-20260901-1030-qqq` | QQQ 699/694P, exp 4 Sep | 2 | 0.59 | 0.90 | **−$62** | 1.18 |
+| `tg-e-20260831-1030-spy` | SPY 754/749P, exp 9 Sep | 1 | 0.61 | 0.90 | **−$29** | 1.22 |
+| `tg-e-20260901-1030-qqq` | QQQ 699/694P, exp 4 Sep | 2 | 0.59 | 0.82 | **−$46** | 1.18 |
 
-**Total unrealised −$96** on a $100,000 account (−0.10%). Both read `hold` at
-the 14:58 ET tick. `HALT.json` inactive, no orphans, every tick green.
+**Total unrealised −$75** on a $100,000 account (−0.08%). Both read `hold` at
+the 15:12 ET tick, and both improved through the afternoon. `HALT.json` inactive, no orphans, every tick green.
 
 **Watch QQQ.** It touched 1.11 at 14:46 ET against a 1.18 stop — inside 7
-cents of a stop-out. It has since eased to 0.90. **QQQ expires Fri 4 Sep, so
+cents of a stop-out. It has since eased to 0.82. **QQQ expires Fri 4 Sep, so
 it has 3 DTE and the least time to recover.** SPY expires 9 Sep and never got
 closer than 1.08 against 1.22.
 
-The −1% daily drawdown halt is about $900 away. That halt blocks new entries
+The −1% daily drawdown halt is about $925 away. That halt blocks new entries
 only. It never closes a position.
 
 Book is at capacity — 2 concurrent, 1 per underlying — so **no entry was
