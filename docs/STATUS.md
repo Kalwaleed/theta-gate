@@ -26,10 +26,39 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
   tenor change (`2f0472f`, msuiche's finding) exists for.
 - **The entry ladder worked as designed:** first order at mid −0.63 did not fill in
   40 seconds, re-priced to −0.58, filled at 0.59.
-- **First fill-versus-quote measurement.** Realised credit/width 0.118 against 0.120
-  quoted five minutes earlier — about 2.5% slippage at $5 width, which matches the
-  half-of-bid-ask assumption. Book now at capacity: 2 concurrent, 1 per underlying,
-  so no further entries today.
+- **First fill-versus-quote measurement — and the first number here was wrong.** The
+  order asked for the mid at −0.63 and filled at 0.59, so slippage was **6.35%**, not the
+  2.5% first recorded (that compared the fill to the ladder's second rung rather than to
+  the mid actually requested). Against a measured friction of ~0.05 that implies you give
+  up roughly 1.2x the half-spread, not half of it. Book at capacity: 2 concurrent, 1 per
+  underlying, so no further entries today.
+
+### The width question, closed — $5 stays
+
+Sampled 208 quote observations across four widths and two tenors, 09:47-11:51 ET
+(`scripts/measure_credit_curve.py`, CSV kept out of the repo). Five independent agents
+reviewed the conclusion. **Decision: leave `width_dollars` at 5.**
+
+- **Bid-ask cost is flat in DOLLARS across every width** — SPY $2.15-$2.38 per contract,
+  QQQ $3.31-$3.85, from $1 wide to $5 wide — while net credit scales with width
+  ($28.77 at $1 vs $115.69 at $5, qty 2). The "+20% better at $2" figure was `net_ratio`,
+  which divides by width, i.e. by margin: it made a margin-efficiency number look like a
+  return. With `fixed_quantity` pinned at 2, narrowing simply collects less money, and
+  P&L is judged in dollars.
+- **KNOWN LATENT COUPLING, worth fixing after the deadline:**
+  `loop.py:71 ENTRY_CONCESSION_FLOOR_DOLLARS = 0.50` is an absolute dollar floor, and
+  `loop.py:1077` sets the ladder's second rung to `max(credit - 0.05, 0.50)`. Below about
+  $4.6 of width the "concession" asks for MORE credit than the opening order and can never
+  fill — $2 mid is $0.29 against an s1 of $0.50. So `width_dollars` is **not** a single
+  governance value; changing it silently disables the only rung that has ever filled.
+- **Live risk to watch:** at $5 the running config sits ~8 points from
+  `gate_credit_quality`'s 40% deviation limit, versus ~26 points at $2. $5 is the width
+  most likely to self-veto at Wednesday's final window.
+- Corrections to earlier claims in this log: "SPY $1 wins 13/13" was 9 wins and 4 ties
+  (ties were being awarded to $1); "zero of 208 vetoed" covers only the 2 credit gates the
+  sampler evaluates, not all 15; and the width change would have affected zero trades
+  today, not "at most one".
+
 
 
 - **09:36 ET today: the first-ever cron-scheduled tick fired**, and it worked. Every green run before this was `workflow_dispatch` — the schedule trigger was unproven all week (see the closed PR #8). It is proven now.
