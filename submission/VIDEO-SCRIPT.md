@@ -1,8 +1,14 @@
 # Demo + video — shot list and spoken script
 
-**Target 3:00.** lablab publishes no length limit on the archived rules page,
-so short is the safe read. Everything below is recordable **before** Thursday
-except Shot 8, which needs the flat book.
+**Target 3:00.** Our archived copy of the rules
+(`docs/hackathon-rules-2026-08-30.md`) lists "Video presentation" as a
+submission field and states **no duration rule anywhere** — no cap, no
+minimum. PR #29 asserted a 5-minute cap and a penalty under 3 minutes; that
+is unsourced against what we hold, so this stays short rather than padding to
+meet a rule we cannot verify. If a source turns up, archive it and re-time.
+
+Everything below is recordable **before** Thursday except Shot 8, which needs
+the flat book.
 
 ## Before you hit record
 
