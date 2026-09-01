@@ -6,6 +6,8 @@ An autonomous options-trading agent for the [Alpaca AI Trading Agents Hackathon]
 
 This file is the getting-started guide and team workflow note. The full design doc — architecture, every risk gate, the corrections from live testing, the timeline — lives at **[`docs/PLAN.md`](docs/PLAN.md)**. Read that before touching `risk.py` or `spread.py`. Strategy/architecture authority is **[`docs/THETA_GATE_CANONICAL_PLAN.md`](docs/THETA_GATE_CANONICAL_PLAN.md)** — see `docs/PLAN.md` for which parts of it we build (Scoped V1) and which we deliberately don't (a Postgres/OIDC control-plane, sized for a production system rather than a 5-day paper demo). The final one-page write-up for judging gets built here on Thursday, once there's real trading history to report.
 
+**Live dashboard:** https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/
+
 ## Status
 
 Built and passing: `alpaca.py`, `spread.py`, `risk.py`, `market.py`, `brain.py`, `loop.py`, `store.py`, `app.py`, `governance.json`, `data/events_2026-08-31_2026-09-04.json`, `.github/workflows/agent.yml` — 155/155 tests across `test_agent.py`, `test_loop.py`, `test_store.py` and `test_app.py`. Three diagrams at [`docs/diagrams/`](docs/diagrams/). Run the dashboard locally with `streamlit run app.py`. See the Repo layout table in `docs/PLAN.md` for the live checklist.

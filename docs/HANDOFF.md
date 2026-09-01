@@ -180,3 +180,32 @@ Use `.venv/bin/python3`, never system `python3`. Kill switch:
 `data/HALT.json` → `active: true`.
 
 Repo: `github.com/Kalwaleed/theta-gate` (private, 6 collaborators).
+
+---
+
+## Demo URL — one setting still needs changing
+
+**https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/**
+
+Deployed and rendering, but **currently behind a login wall**. Verified 1 Sep:
+
+```
+GET /      -> 303
+location:  https://share.streamlit.io/-/auth/app?redirect_uri=...
+then       -> /-/login?payload=...
+```
+
+A judge opening it sees a Streamlit sign-in page, not the dashboard. The
+hackathon requires a working Application URL, so as it stands the entry
+effectively has no demo.
+
+**Cause:** the app was deployed from a private repo, so Streamlit Cloud
+defaulted the *app* to private. **App visibility is a separate setting from
+repo visibility — Thursday's automated repo flip will not fix this.**
+
+**Fix (PK, ~30 seconds):** share.streamlit.io → the app → **Settings → Sharing**
+→ set to **"This app is public and searchable"** (or *anyone with the link*).
+Then confirm in a private browser window that it loads without signing in.
+
+Do this before Friday, and re-check it after Thursday's repo flip in case the
+visibility change resets.
