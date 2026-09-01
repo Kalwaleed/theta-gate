@@ -471,10 +471,25 @@ def main():
     realised = s["realised_pnl_dollars"]
     wr = win_rate(s["positions_closed"], s["wins"])
     tone = "win" if realised > 0 else ("loss" if realised < 0 else "")
+
+    # How fresh the open book is. The OLDEST open mark, not the newest: if
+    # the loop stopped evaluating one leg, the book is as stale as that leg,
+    # and the newest mark would paper over exactly the gap worth seeing.
+    # ponytail: sorted as text, which is right while every journal timestamp
+    # carries the same ET offset. A position held across the November DST
+    # shift would need parsing -- outside the six-session window.
+    open_marks = sorted(p["latest_mark_ts"] for p in d["positions"]
+                        if p["status"] == "open" and p["latest_mark_ts"])
+    marked_at = open_marks[0] if open_marks else None
+
     cards = [
         ("Equity", money(s["equity"]), f"from {money(d['start'])} start", ""),
         ("Realised P&L", money(realised, signed=True),
          f"{s['positions_closed']} closed", tone),
+        ("Unrealised", money(s["unrealised_pnl_dollars"], signed=True),
+         (f"{s['positions_open']} open, marked {short_ts(marked_at)}" if marked_at
+          else f"{s['positions_open']} open, not yet marked"),
+         "win" if s["unrealised_pnl_dollars"] > 0 else ("loss" if s["unrealised_pnl_dollars"] < 0 else "")),
         ("Open now", str(s["positions_open"]),
          f"cap {gov['risk']['max_concurrent_positions']}", ""),
         ("Win rate", pct(wr), f"{s['wins']} of {s['positions_closed']}"
@@ -509,7 +524,17 @@ def main():
     if d["positions"]:
         rows = []
         for p in open_pos + closed:
-            pnl = p["realised_pnl_dollars"]
+            # An open position has no realised P&L but does have a mark:
+            # loop.py journals exit_evaluated every tick it holds one.
+            # Showing "--" there hid a number the journal already had.
+            live = p["status"] == "open"
+            pnl = p["unrealised_pnl_dollars"] if live else p["realised_pnl_dollars"]
+            debit = p["latest_mark"] if live else p["close_debit"]
+            # A mark is only as good as its clock. If the Actions cron stalls,
+            # the number stays on the page looking current -- so date it.
+            # A closed debit is final and needs no such qualifier.
+            mark_title = (f' title="marked {esc(short_ts(p["latest_mark_ts"]))}"'
+                          if live and p["latest_mark_ts"] else "")
             cls = "tg-win" if (pnl or 0) > 0 else ("tg-loss" if (pnl or 0) < 0 else "")
             state = ('<span class="tg-tag-s acc">open</span>' if p["status"] == "open"
                      else f'<span class="tg-tag-s">'
@@ -519,10 +544,12 @@ def main():
                 f'{esc(short_ts(p["entry_ts"]))}<div class="tg-sym">exp {esc(p["expiry"] or "--")}</div>',
                 f'<span class="tg-num">{esc(str(p["qty"] if p["qty"] is not None else "--"))}</span>',
                 f'<span class="tg-num">{money(p["credit"])}</span>',
-                f'<span class="tg-num">{money(p["close_debit"])}</span>',
+                f'<span class="tg-num"{mark_title}>{money(debit)}</span>'
+                + ('<div class="tg-sym">mark</div>' if live and debit is not None else ''),
                 f'<span class="tg-num">{money(p["max_loss_dollars"])}</span>',
                 state,
-                f'<span class="tg-num {cls}">{money(pnl, signed=True)}</span>',
+                f'<span class="tg-num {cls}">{money(pnl, signed=True)}</span>'
+                + ('<div class="tg-sym">unrealised</div>' if live and pnl is not None else ''),
             ])
         st.markdown(render_rows(
             ["Underlying", "Entered", "Qty", "Credit", "Close debit", "Max loss", "State", "P&L"],
