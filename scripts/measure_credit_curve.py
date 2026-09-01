@@ -68,9 +68,17 @@ def measure(now=None):
                 vetoes = [g.__name__.replace("gate_", "") for g in
                           (risk.gate_credit_quality, risk.gate_minimum_credit)
                           if g({}, p, GOV, now) is not None]
+                # plan.credit is short.mid - long.mid, i.e. a MID credit. What
+                # you actually get filled at is worse by some part of the
+                # bid-ask, and friction_ratio is exactly that spread as a
+                # fraction of the mid. net assumes you give up half of it.
+                friction = spread.friction_ratio(p)
+                ratio = p.credit / p.width
                 rows.append({
                     "ts": now, "underlying": underlying, "band": label, "width": width,
-                    "credit": round(p.credit, 4), "ratio": round(p.credit / p.width, 4),
+                    "credit": round(p.credit, 4), "ratio": round(ratio, 4),
+                    "friction": round(friction, 4) if friction != float("inf") else None,
+                    "net_ratio": round(ratio * (1 - friction / 2), 4) if friction != float("inf") else None,
                     "delta": round(abs(p.short.delta), 4), "expected": round(expected, 4),
                     "dte": (datetime.strptime(p.short.expiry, "%Y-%m-%d").date() - now.date()).days,
                     "spot": state.get("spot"), "vetoes": "|".join(vetoes) or "none",
@@ -90,7 +98,10 @@ def compact(rows):
             if not sel:
                 continue
             tag = "3-5" if label.startswith("3-5") else "6-9"
-            widths = " ".join(f"${int(r['width'])}={r['ratio']:.3f}" for r in sorted(sel, key=lambda r: r["width"]))
+            widths = " ".join(
+                f"${int(r['width'])}={r['ratio']:.3f}/f{r['friction']:.2f}→{r['net_ratio']:.3f}"
+                if r.get("net_ratio") is not None else f"${int(r['width'])}={r['ratio']:.3f}/f--"
+                for r in sorted(sel, key=lambda r: r["width"]))
             bad = {v for r in sel for v in r["vetoes"].split("|") if v != "none"}
             out.append(f"{u} {tag}d {widths}" + (f"  VETO[{','.join(sorted(bad))}]" if bad else ""))
     return f"{ts} ET  " + "  |  ".join(out)
@@ -148,8 +159,8 @@ def sample_and_log(csv_path):
     if rows:
         path = pathlib.Path(csv_path)
         new_file = not path.exists()
-        fields = ["ts", "underlying", "band", "width", "credit", "ratio", "delta",
-                  "expected", "dte", "spot", "vetoes", "error"]
+        fields = ["ts", "underlying", "band", "width", "credit", "ratio", "friction",
+                  "net_ratio", "delta", "expected", "dte", "spot", "vetoes", "error"]
         with path.open("a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             if new_file:
