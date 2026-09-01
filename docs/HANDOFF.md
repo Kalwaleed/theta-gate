@@ -4,7 +4,7 @@
 update this file as the day moves. Put rolling state in `docs/STATUS.md`.
 Put team-facing state in `docs/TEAM-BRIEF.md`.
 
-**Written Tue 1 Sep 2026, 14:25 ET (21:25 Riyadh).** Deadline: **submission
+**Written Tue 1 Sep 2026, 15:01 ET (22:01 Riyadh).** Deadline: **submission
 Fri 4 Sep, 11:00 ET.**
 
 **Verify before you trust this file** — `git log --oneline -5`,
@@ -15,8 +15,9 @@ disagrees with this file, the repo is right.
 
 ## Do this first — arm the Wednesday watcher
 
-The previous session armed a Monitor for the Wednesday open. **That Monitor
-died with the session.** Nothing is armed now. Re-arm it:
+Nothing is armed. Checked at 15:01 ET: `pgrep -fl wed_watch.sh` returns
+nothing. A Monitor armed inside a session dies with that session, which is why
+the script exists. Re-arm it:
 
 ```bash
 nohup scripts/wed_watch.sh > /tmp/wed_watch.log 2>&1 &
@@ -46,21 +47,50 @@ until 10:52 ET.
 
 | Item | Value |
 |---|---|
-| Branch | `main` at `f8a641f` |
+| Branch | `main` at `0641df9`, clean, nothing unpushed |
 | Tests | **317 pass** |
 | HALT | inactive |
-| Open PRs | **#32** (peer session, dashboard URL + sharing) |
+| Open PRs | **none** |
+| Journal | 268 events, chain intact, 4 sessions |
 | Positions | **2 of 2 — at capacity** |
+| Realised / unrealised | **$0.00 / -$118.00** |
 
-**Book, both underwater, both `hold`:**
+**Book at the 14:52 ET tick. Both `hold`, both moved against us today:**
 
-| Position | Legs | Qty | Credit | Cost to close | DTE |
-|---|---|---|---|---|---|
-| `tg-e-20260831-1030-spy` | 754P / 749P | 1 | 0.61 | 0.84 | 8 |
-| `tg-e-20260901-1030-qqq` | 699P / 694P | 2 | 0.59 | 0.73 | 3 |
+| Position | Legs | Qty | Credit | Mark | Stop | To stop | Unrealised | DTE |
+|---|---|---|---|---|---|---|---|---|
+| `tg-e-20260831-1030-spy` | 754P / 749P | 1 | 0.61 | **1.01** | 1.22 | 0.21 | -$40 | 8 |
+| `tg-e-20260901-1030-qqq` | 699P / 694P | 2 | 0.59 | **0.98** | 1.18 | 0.20 | -$78 | 3 |
 
-Neither is near its stop (1.22 SPY, 1.18 QQQ). Both sit at capacity, so
-**Wednesday's 10:30 window can only enter if one of these exits first.**
+**This is the number that changed since the last handoff.** The marks were
+0.84 and 0.73 at 12:44 ET. Both are now about 83% of the way to their stops
+(`stop_close_debit_multiple: 2.0`, so 2x credit). Neither has triggered, and
+the loop signalled `hold` on both at 14:52. **Expect a stop-out to be the most
+likely Wednesday event, not an entry** — and a stop-out frees a slot, which is
+the second reason the watcher starts at 09:28 rather than 10:28.
+
+Both sit at capacity, so **Wednesday's 10:30 window can only enter if one of
+these exits first.**
+
+---
+
+## Landed today — do not redo
+
+| What | Where |
+|---|---|
+| Unrealised P&L on open positions, from the `exit_evaluated` mark | PR **#31**, merged `5900e9f` |
+| Mark cell carries its timestamp in a `title` | `8448127` |
+| Unrealised card dated by its **stalest** open mark | `f8a641f` |
+| Demo URL recorded in README, write-up, this file | PR **#32**, merged `0641df9` |
+
+The dashboard rendered `--` under P&L for both open positions until #31. The
+cause was `store.py` reading `close_debit` off `exit_filled` only, which does
+not exist until a position closes, while `loop.py` had been journaling
+`cost_to_close` on every tick all along.
+
+**PR #32 also claimed the demo was behind a login wall. It was not** — see the
+Demo URL section. That claim was removed from this file and from the PR before
+merge. Do not re-file it.
 
 ---
 
@@ -151,14 +181,18 @@ Repo: `github.com/Kalwaleed/theta-gate` (private until Thu 3 Sep 17:00 ET).
 **https://theta-gate-km6zecgl3nxqiqnh7fpdqg.streamlit.app/**
 
 Public, anonymous, and rendering. Verified 1 Sep in a headless browser with no
-Streamlit account: the dashboard loads, no sign-in.
+Streamlit account: the dashboard loads, no sign-in, and the Unrealised card
+reads its value from the committed journal.
 
 **Do not verify this with plain `curl -L`.** Streamlit Cloud answers the first
-anonymous request to *any* app -- public ones included -- with
+anonymous request to *any* app — public ones included — with
 `303 -> share.streamlit.io/-/auth/app`, which sets a session cookie and bounces
 back. A client that keeps no cookies follows that into `/-/login?payload=...`
 and reads as a login wall. `curl -sL -c jar -b jar <url>` returns 200; a browser
 renders the page. This produced one false submission-blocking report already.
+
+The app content also sits in an iframe (`/~/+/`), so a top-level DOM query
+finds only the Streamlit host chrome. Screenshot it instead.
 
 Sharing is set to *"This app is public and searchable"*. Worth one browser check
 after Thursday's repo flip, in case the visibility setting resets with it.
