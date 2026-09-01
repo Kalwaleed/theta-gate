@@ -12,6 +12,26 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 
 ## Right now, this exact moment
 
+### Tue 1 Sep — three firsts in one trade
+
+- **10:33 ET: QQQ 699/694P filled, $5 wide, qty 2, exp 4 Sep, credit $0.59**, max
+  loss $882 against the $1,000 cap. Position `tg-e-20260901-1030-qqq`.
+- **It proposed QQQ, not SPY — `f7b74b9`'s position-aware routing running live for
+  the first time.** SPY was at its per-underlying cap from Monday, so the model was
+  only offered what it could actually trade. At 10:44 the same fix logged
+  `all_underlyings_at_cap` and **skipped the model call entirely** rather than
+  proposing something the gates would veto. Both halves of that commit are now proven.
+- **First qty-2 fill (X1) and first 3-5 DTE fill.** Expiry 4 Sep is 3 days out, so
+  Thursday's force-close catches it a day before expiry — the decay capture the
+  tenor change (`2f0472f`, msuiche's finding) exists for.
+- **The entry ladder worked as designed:** first order at mid −0.63 did not fill in
+  40 seconds, re-priced to −0.58, filled at 0.59.
+- **First fill-versus-quote measurement.** Realised credit/width 0.118 against 0.120
+  quoted five minutes earlier — about 2.5% slippage at $5 width, which matches the
+  half-of-bid-ask assumption. Book now at capacity: 2 concurrent, 1 per underlying,
+  so no further entries today.
+
+
 - **09:36 ET today: the first-ever cron-scheduled tick fired**, and it worked. Every green run before this was `workflow_dispatch` — the schedule trigger was unproven all week (see the closed PR #8). It is proven now.
 - **10:30 ET: first live trade, filled clean.** SPY bull put credit spread, short 754P / long 749P, $5 wide, qty 1, exp 9 Sep, credit $0.61 (order `7fe33b90`). Both legs filled atomically at the same broker timestamp — no naked leg. `tick_completed` immediately after: `halt_active: false`, `orphan_symbols: []`.
 - **The price-sign convention is now verified live, for the first time ever.** Pulled the raw order directly from Alpaca (`alpaca order get`, not just the journal): parent `filled_avg_price: "-0.61"` matches submitted `limit_price: "-0.61"` exactly. `loop.py`'s `_extract_actual_price` docstring updated to record this (commit `a3b1447`) — no longer flagged as unverified.
