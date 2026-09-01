@@ -471,12 +471,24 @@ def main():
     realised = s["realised_pnl_dollars"]
     wr = win_rate(s["positions_closed"], s["wins"])
     tone = "win" if realised > 0 else ("loss" if realised < 0 else "")
+
+    # How fresh the open book is. The OLDEST open mark, not the newest: if
+    # the loop stopped evaluating one leg, the book is as stale as that leg,
+    # and the newest mark would paper over exactly the gap worth seeing.
+    # ponytail: sorted as text, which is right while every journal timestamp
+    # carries the same ET offset. A position held across the November DST
+    # shift would need parsing -- outside the six-session window.
+    open_marks = sorted(p["latest_mark_ts"] for p in d["positions"]
+                        if p["status"] == "open" and p["latest_mark_ts"])
+    marked_at = open_marks[0] if open_marks else None
+
     cards = [
         ("Equity", money(s["equity"]), f"from {money(d['start'])} start", ""),
         ("Realised P&L", money(realised, signed=True),
          f"{s['positions_closed']} closed", tone),
         ("Unrealised", money(s["unrealised_pnl_dollars"], signed=True),
-         f"{s['positions_open']} open, marked to last tick",
+         (f"{s['positions_open']} open, marked {short_ts(marked_at)}" if marked_at
+          else f"{s['positions_open']} open, not yet marked"),
          "win" if s["unrealised_pnl_dollars"] > 0 else ("loss" if s["unrealised_pnl_dollars"] < 0 else "")),
         ("Open now", str(s["positions_open"]),
          f"cap {gov['risk']['max_concurrent_positions']}", ""),
