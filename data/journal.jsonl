@@ -391,3 +391,4 @@
 {"ts": "2026-09-02T12:54:56.712403-04:00", "event": "exit_evaluated", "position_id": "tg-e-20260901-1030-qqq", "underlying": "QQQ", "credit": 0.59, "cost_to_close": 0.5, "dte": 2, "signal": "hold"}
 {"ts": "2026-09-02T12:54:57.283195-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-02T12:54:57.283295-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 2, "entry_attempted": false}
+{"ts": "2026-09-02T12:55:30.225838-04:00", "event": "mcp_reconciliation", "level": "info", "clean": true, "model": "claude-opus-5", "server_version": "2.3.0", "matched": ["QQQ260904P00694000", "QQQ260904P00699000", "SPY260909P00749000", "SPY260909P00754000"], "journal_only": [], "broker_only": [], "broker_equity": [], "orders_seen": 0, "fills_unknown_to_journal": [], "journal_fills_unknown_to_broker": []}
