@@ -288,7 +288,7 @@
       \textcolor{soft}{\ttfamily\scriptsize DRAWDOWN}
       \begin{itemize}\itemsep1pt
         \item $-1\%$ on the day $\rightarrow$ no new entries
-        \item equity $\leq$ \$98{,}000 $\rightarrow$ HALT and close out
+        \item equity $\leq$ \$98{,}000 $\rightarrow$ HALT, no new entries
       \end{itemize}
     \end{column}
   \end{columns}
@@ -306,7 +306,7 @@
   \small
 
   \lead{Short credit vertical on SPY or QQQ. \$5 wide. 3--5 DTE. Short leg at 0.16--0.25
-  delta. Two contracts, fixed, all week.}
+  delta. Two contracts, fixed, since 31 August.}
 
   \begin{columns}[T]
     \begin{column}{0.5\textwidth}
@@ -501,8 +501,9 @@
         \kbd{alpaca doctor --profile} flag that silently lies.
 
         \vspace{0.29em}
-        An adversarial review pass over \kbd{loop.py} caught six real defects, two of them
-        blockers, before any of it was trusted with an order.}
+        Adversarial review passes over \kbd{loop.py} caught and fixed real defects ---
+        including a zero-bid exit leg and an id-less order hit --- before any of it was
+        trusted with an order.}
     \end{column}
   \end{columns}
 
