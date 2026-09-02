@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import alpaca
+import loop
 import market
 import risk
 import spread
@@ -847,10 +848,15 @@ def test_the_carryover_still_escalates_within_the_later_day(real_gov):
 
 def test_the_carryover_index_is_clamped(real_gov):
     """Governance is hand-edited. An index past the end of the ladder must
-    clamp rather than raise on the one day the flatten matters."""
-    for bad in (-3, 99):
+    clamp rather than raise on the one day the flatten matters -- and it
+    must not clamp onto reconcile_and_alert, which places no order. A
+    fat-fingered value there would silently disable the entire day-after
+    ladder: no closing order placed, all day, just an alert."""
+    for bad in (3, 99, -3):
         gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_carryover_rung": bad}}
-        assert _rung("2026-09-04", "09:35", gov) in [r["action"] for r in gov["exit"]["force_close_ladder"]]
+        action = _rung("2026-09-04", "09:35", gov)
+        assert action in [r["action"] for r in gov["exit"]["force_close_ladder"]]
+        assert action != "reconcile_and_alert"
 
 
 def test_carryover_zero_reproduces_the_old_behaviour(real_gov):
@@ -858,3 +864,44 @@ def test_carryover_zero_reproduces_the_old_behaviour(real_gov):
     exactly as before."""
     gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_carryover_rung": 0}}
     assert _rung("2026-09-04", "09:35", gov) == "limit_at_mid"
+
+
+def test_an_all_alert_ladder_degrades_instead_of_raising(real_gov):
+    """A plausible hand-edit is turning every rung into reconcile_and_alert
+    to pause the autonomous force-close. Deriving the clamp bound from the
+    ladder must not make that an exception: e15242c's rule is that a bad
+    governance value degrades, never raises, in the flatten path."""
+    ladder = [{**r, "action": "reconcile_and_alert"} for r in real_gov["exit"]["force_close_ladder"]]
+    gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_ladder": ladder}}
+    assert _rung("2026-09-04", "09:35", gov) == "reconcile_and_alert"
+
+
+# ---------------------------------------------------------------------------
+# risk.force_close_action and loop._current_force_rung are two walks of the
+# same ladder. loop asserts they agree, but that assert only fires in
+# production, mid-flatten, with a live position open. These call loop's walk
+# DIRECTLY so a one-sided edit fails CI instead.
+# ---------------------------------------------------------------------------
+
+def _both(day, t, gov):
+    now = datetime.fromisoformat(f"{day}T{t}:00").replace(tzinfo=ET)
+    return risk.force_close_action(now, gov), loop._current_force_rung(now, gov)["action"]
+
+
+@pytest.mark.parametrize("day,t", [
+    ("2026-09-03", "09:35"), ("2026-09-03", "14:30"), ("2026-09-03", "15:00"),
+    ("2026-09-03", "15:30"), ("2026-09-03", "15:45"),
+    ("2026-09-04", "09:35"), ("2026-09-04", "11:00"), ("2026-09-04", "15:30"),
+    ("2026-09-07", "09:35"),
+])
+def test_the_two_ladder_walks_agree(real_gov, day, t):
+    a, b = _both(day, t, real_gov)
+    assert a == b
+
+
+@pytest.mark.parametrize("bad", [0, 1, 2, 3, 99, -3])
+def test_the_two_ladder_walks_agree_on_every_carryover_value(real_gov, bad):
+    gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_carryover_rung": bad}}
+    a, b = _both("2026-09-04", "09:35", gov)
+    assert a == b
+    assert a != "reconcile_and_alert"

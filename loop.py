@@ -629,7 +629,17 @@ def _current_force_rung(now, gov):
     force_date = datetime.strptime(gov["exit"]["force_close_start_date"], "%Y-%m-%d").date()
     if now_et.date() > force_date:
         carryover = gov["exit"].get("force_close_carryover_rung", 0)
-        start = max(0, min(carryover, len(ladder) - 1))
+        # Assumption: reconcile_and_alert is always the last rung and the only
+        # one that places no order. Clamp to the highest rung that still
+        # submits one, so a bad governance value can't silently disable the
+        # entire day-after ladder. Must mirror risk.force_close_action exactly.
+        # `default` matters: a ladder whose every action is reconcile_and_alert
+        # is a plausible hand-edit ("pause the autonomous force-close"), and an
+        # empty max() would raise. Degrade to the old behaviour -- the last
+        # rung, alert-only -- rather than crash the tick.
+        max_start = max((i for i, r in enumerate(ladder)
+                         if r["action"] != "reconcile_and_alert"), default=len(ladder) - 1)
+        start = max(0, min(carryover, max_start))
 
     current = ladder[start]
     for rung in ladder[start:]:
