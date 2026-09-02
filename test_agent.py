@@ -797,3 +797,64 @@ def test_parse_chain_keeps_zero_bid_only_when_allowed():
     kept = {c.symbol: c for c in spread.parse_chain(snaps, allow_zero_bid=True)}
     assert set(kept) == {"SPY260908P00695000", "SPY260908P00700000"}
     assert kept["SPY260908P00695000"].bid == 0.0 and kept["SPY260908P00695000"].mid == 0.025
+
+
+@pytest.fixture
+def real_gov():
+    """The file the agent actually trades on, not the inline GOV fixture.
+    These assertions are about Thursday's real flatten date and ladder."""
+    import json as _j
+    with open("governance.json", encoding="utf-8") as f:
+        return _j.load(f)
+
+
+# ---------------------------------------------------------------------------
+# The flatten ladder must not reset the morning after the flatten day
+# ---------------------------------------------------------------------------
+
+def _rung(day, t, gov):
+    return risk.force_close_action(
+        datetime.fromisoformat(f"{day}T{t}:00").replace(tzinfo=ET), gov)
+
+
+def test_the_flatten_day_ladder_is_unchanged(real_gov):
+    """THE regression guard for this change. Thursday 3 Sep is the
+    mandatory flatten and the highest-stakes path in the system. The
+    carryover must not touch it: same rungs, same times, same behaviour.
+    """
+    d = real_gov["exit"]["force_close_start_date"]
+    assert _rung(d, "09:35", real_gov) == "limit_at_mid"
+    assert _rung(d, "14:30", real_gov) == "limit_at_mid"
+    assert _rung(d, "15:00", real_gov) == "cross_the_spread"
+    assert _rung(d, "15:30", real_gov) == "market_mleg"
+    assert _rung(d, "15:45", real_gov) == "reconcile_and_alert"
+
+
+def test_the_day_after_does_not_reopen_at_the_gentlest_rung(real_gov):
+    """A position that survived Thursday's full escalation would meet
+    Friday 09:35 back on limit_at_mid, and would not reach the marketable
+    rung until 15:30 -- four and a half hours after the 11:00 submission
+    deadline, on a position that is 0 DTE by then."""
+    assert _rung("2026-09-04", "09:35", real_gov) != "limit_at_mid"
+    assert _rung("2026-09-04", "11:00", real_gov) == "cross_the_spread"
+
+
+def test_the_carryover_still_escalates_within_the_later_day(real_gov):
+    """Starting further along the ladder must not freeze it there."""
+    assert _rung("2026-09-04", "15:30", real_gov) == "market_mleg"
+    assert _rung("2026-09-04", "15:45", real_gov) == "reconcile_and_alert"
+
+
+def test_the_carryover_index_is_clamped(real_gov):
+    """Governance is hand-edited. An index past the end of the ladder must
+    clamp rather than raise on the one day the flatten matters."""
+    for bad in (-3, 99):
+        gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_carryover_rung": bad}}
+        assert _rung("2026-09-04", "09:35", gov) in [r["action"] for r in gov["exit"]["force_close_ladder"]]
+
+
+def test_carryover_zero_reproduces_the_old_behaviour(real_gov):
+    """The escape hatch: set it to 0 and Friday reopens at limit_at_mid
+    exactly as before."""
+    gov = {**real_gov, "exit": {**real_gov["exit"], "force_close_carryover_rung": 0}}
+    assert _rung("2026-09-04", "09:35", gov) == "limit_at_mid"

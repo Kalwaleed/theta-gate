@@ -421,11 +421,33 @@ def exit_signal(position: dict, state: dict, gov: dict, now: datetime) -> str | 
 
 def force_close_action(now: datetime, gov: dict) -> str:
     """Which rung of the flatten ladder applies right now. Only meaningful
-    once exit_signal has already returned 'force_close'."""
+    once exit_signal has already returned 'force_close'.
+
+    The ladder is time-of-day, which is right on the flatten day itself and
+    wrong on any day after it. A position that survived Thursday's full
+    escalation -- limit at mid, then crossing, then the marketable bound --
+    would meet Friday at 09:35 on limit_at_mid again, the gentlest rung of
+    the four, and would not reach the marketable one until 15:30. The
+    submission deadline is 11:00 Friday, so the aggressive attempt lands
+    four and a half hours after the number has to be final, on a position
+    that is 0 DTE by then.
+
+    So from the day AFTER force_close_start_date, the ladder starts at
+    governance.exit.force_close_carryover_rung instead of rung 0. Thursday
+    itself is untouched: same rungs, same times, same behaviour -- verified
+    by test_the_flatten_day_ladder_is_unchanged.
+    """
     now_et = now.astimezone(ET)
     ladder = gov["exit"]["force_close_ladder"]
-    action = ladder[0]["action"]
-    for rung in ladder:
+    force_date = datetime.strptime(gov["exit"]["force_close_start_date"], "%Y-%m-%d").date()
+
+    start = 0
+    if now_et.date() > force_date:
+        carryover = gov["exit"].get("force_close_carryover_rung", 0)
+        start = max(0, min(carryover, len(ladder) - 1))
+
+    action = ladder[start]["action"]
+    for rung in ladder[start:]:
         rung_time = dtime.fromisoformat(rung["at_et"])
         if now_et.time() >= rung_time:
             action = rung["action"]

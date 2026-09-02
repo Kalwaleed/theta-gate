@@ -620,8 +620,19 @@ def _current_force_rung(now, gov):
     recomputed; the assert is a cheap internal consistency check."""
     now_et = now.astimezone(ET)
     ladder = gov["exit"]["force_close_ladder"]
-    current = ladder[0]
-    for rung in ladder:
+
+    # Same carryover as risk.force_close_action: on a day AFTER the flatten
+    # date the ladder must not reopen at its gentlest rung. These two walks
+    # have to agree, which is what the assert below is for -- it caught this
+    # function being left behind when force_close_action changed.
+    start = 0
+    force_date = datetime.strptime(gov["exit"]["force_close_start_date"], "%Y-%m-%d").date()
+    if now_et.date() > force_date:
+        carryover = gov["exit"].get("force_close_carryover_rung", 0)
+        start = max(0, min(carryover, len(ladder) - 1))
+
+    current = ladder[start]
+    for rung in ladder[start:]:
         if now_et.time() >= dtime.fromisoformat(rung["at_et"]):
             current = rung
     assert current["action"] == risk.force_close_action(now, gov)
