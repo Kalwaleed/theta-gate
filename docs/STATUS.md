@@ -30,9 +30,11 @@ QQQ never revisited its 14:46 scare at 1.11. On Wednesday SPY is 7 DTE and QQQ i
 **The binding constraint at today's 10:30 window is capacity, not the credit gate.**
 Both underlyings are held, so `_available_underlyings` returns empty and `loop.py`
 journals `no_trade: all_underlyings_at_cap` and returns — **before the chain fetch and
-before the model call**. No gate is reached, `gate_credit_quality` included. This is the
-same path already proven live at 10:44 on Tuesday, described in the section below; it is
-working as designed, not failing.
+before the model call**. Two gates do run: `_available_underlyings` calls
+`gate_concurrent` and `gate_daily_fill_cap_per_underlying` as a preflight, and they are
+the entire decision. **No downstream gate is reached** — `risk.check_all` never runs, so
+`gate_credit_quality` is never evaluated. This is the same path already proven live at
+10:44 on Tuesday, described in the section below; it is working as designed, not failing.
 
 So **a third trade requires an exit to fire first.** Take-profit is 50% of credit, so it
 needs SPY at ≤0.305 or QQQ at ≤0.295 against 0.87 and 0.79 — roughly a 60% fall in
