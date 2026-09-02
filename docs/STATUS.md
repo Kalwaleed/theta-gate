@@ -1,6 +1,6 @@
 # Status — Theta Gate
 
-**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Tue 1 Sep 2026, ~15:25 ET (22:25 Riyadh). Second live trading day, closing. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Wed 2 Sep 2026, ~04:50 ET (11:50 Riyadh), before the open. Third and final entry day. Deadline: **submission Fri 4 Sep, 11:00 ET.**
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
@@ -11,6 +11,37 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 ---
 
 ## Right now, this exact moment
+
+### Wed 2 Sep, pre-open — the book, marked to Tuesday's close
+
+Final mark is the 16:01:52 ET tick. Both positions held every tick from 15:12 to the
+close; **no signal other than `hold`**, `HALT.json` inactive, no orphans, and the
+16:21 MCP reconciliation came back `clean` with all four legs matched, nothing
+broker-only and nothing journal-only.
+
+| Position | Qty | Credit | Cost to close | Unrealised | Stop | Gap to stop |
+|---|---|---|---|---|---|---|
+| `tg-e-20260831-1030-spy` SPY 754/749P, exp 9 Sep | 1 | 0.61 | 0.87 | **−$26** | 1.22 | 0.35 |
+| `tg-e-20260901-1030-qqq` QQQ 699/694P, exp 4 Sep | 2 | 0.59 | 0.79 | **−$40** | 1.18 | 0.39 |
+
+**Total unrealised −$66** on a $100,000 account (−0.07%), improved from −$75 at 15:12.
+QQQ never revisited its 14:46 scare at 1.11. On Wednesday SPY is 7 DTE and QQQ is 2 DTE.
+
+**The binding constraint at today's 10:30 window is capacity, not the credit gate.**
+Both underlyings are held, so `_available_underlyings` returns empty and `loop.py`
+journals `no_trade: all_underlyings_at_cap` and returns — **before the chain fetch and
+before the model call**. No gate is reached, `gate_credit_quality` included. This is the
+same path already proven live at 10:44 on Tuesday, described in the section below; it is
+working as designed, not failing.
+
+So **a third trade requires an exit to fire first.** Take-profit is 50% of credit, so it
+needs SPY at ≤0.305 or QQQ at ≤0.295 against 0.87 and 0.79 — roughly a 60% fall in
+closing cost in one morning. The other slot-freeing path is a stop-out, which buys the
+chance at the price of a loss. **Plan for two trades, not three.** A credit-quality
+reading taken before the window is a contingency check on that unlikely branch, not the
+deciding input.
+
+Entries close permanently at **10:45 ET today**.
 
 ### Tue 1 Sep — three firsts in one trade
 
@@ -142,7 +173,7 @@ Operational notes for anyone doing history surgery on this repo again: **`git pu
 - **No automated single-leg repair.** A naked leg triggers HALT; a human closes it.
 - **Orphan equity (assignment) is detected, not flattened** — same reason.
 - **A failed `git push` still loses that tick's local writes.** Loud (`ok: false`, red run), not recovered.
-- **X1 (qty 1→2 partial-fill sizing) and X2 (read-only MCP reconciliation)** — designed in Sunday's analysis as after-close work. Not confirmed done or not done as of this writing; check `governance.json`'s quantity field and whether an MCP reconciliation step exists in `loop.py` before assuming either way.
+- ~~**X1 (qty 1→2 partial-fill sizing) and X2 (read-only MCP reconciliation)** — not confirmed done or not done.~~ **Both are DONE, verified directly 2 Sep.** `governance.json` carries `fixed_quantity: 2`, the 1 Sep QQQ entry filled at qty 2, and `mcp_reconciliation` events are in the journal through 16:21 ET Tuesday, reporting `clean`. Nothing left to check here.
 
 ---
 
