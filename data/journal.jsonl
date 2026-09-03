@@ -579,3 +579,4 @@
 {"ts": "2026-09-03T15:55:08.687303-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
 {"ts": "2026-09-03T16:00:54.789348-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-03T16:00:54.789465-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-03T16:19:50.385221-04:00", "event": "mcp_reconciliation", "level": "info", "clean": true, "model": "claude-opus-5", "server_version": "2.3.0", "matched": [], "journal_only": [], "broker_only": [], "broker_equity": [], "orders_seen": 2, "fills_unknown_to_journal": [], "journal_fills_unknown_to_broker": []}
