@@ -114,47 +114,146 @@ name. Less dramatic, still true.
 
 ## The scene
 
-Two generated cards, bookending real screen capture. **Nothing generated may stand
-in for the agent working** — judging asks to see the agent in action, and synthetic
-footage of a fake terminal would be the one dishonest frame in an entry whose entire
-argument is that it doesn't overclaim. Keep them to title and outro.
+Two generated cards bookend real screen capture. **Nothing generated may stand in
+for the agent working.** Judging asks to see the agent in action; synthetic footage
+of a fabricated terminal would be the one dishonest frame in an entry whose whole
+argument is that it does not overclaim. These are a title card and an outro. Nothing
+more.
 
-### Scene A — cold open, 0:00–0:06
+**Palette is fixed by the deck** (`deck/theta-gate.tex:33-40`) — match it or the cut
+to the slides will jar:
 
-> A single wide, locked-off shot. Pre-dawn, a trading desk seen from behind: three
-> dark monitors, no one present, no chair pulled out. The only light is the cold blue
-> of a screensaver and one amber cursor blinking in an otherwise empty terminal.
-> Dust hangs in a shaft of early light from a window off-frame left. Nothing moves
-> except the cursor. Slow, almost imperceptible push-in. Shallow depth of field,
-> the far monitor soft. Muted palette — slate, charcoal, one warm amber accent.
-> No people, no hands, no text on screen. 35mm, anamorphic, subtle film grain.
-> Silent, or a single low room-tone hum.
+| Role | Hex | Where it appears in the scene |
+|---|---|---|
+| Ink (ground) | `#0B0D0F` | Crushed blacks, the room |
+| Accent | `#3F2AC1` KBW Violet | The cursor. The ONLY saturated colour in frame |
+| Muted | `#5B5B5B` | Desk, chair, monitor bezels |
+| Paper | `#F5F5F5` | Title type, Scene B daylight |
 
-Title over it, plain type, lower third: **THETA GATE** — then, smaller,
-*an agent that cannot place a trade it should not.*
+**No amber, no orange, no warm tones anywhere.** The room must read cold and
+unattended. Warmth implies a person was recently there, which argues against the
+thesis.
 
-**Why this shot:** the empty chair *is* the thesis. Autonomy means no one is
-sitting there at 10:30 on a Tuesday. Say the first line over it and cut hard to
-the live dashboard — the contrast between the empty room and the real, populated
-journal does the argument for you.
+---
 
-### Scene B — outro, 2:56–3:00
+### SCENE A — cold open · 6 seconds · 0:00–0:06
 
-> The same desk, same angle, now in flat daylight. The monitors are off. The
-> terminal is gone. The room is ordinary and still. Hold three seconds. No push,
-> no move. Same muted palette, same grain.
+**Paste this as the prompt:**
 
-Title: the repo URL and the Alpaca account ID, plain, held long enough to read.
+> Locked-off cinematic wide shot of an empty financial trading desk before dawn,
+> photographed from directly behind an unoccupied ergonomic chair. Three large
+> monitors arranged in a shallow arc across the upper two-thirds of frame; the two
+> outer monitors are fully dark, the centre monitor shows a black terminal with a
+> single small violet rectangular cursor blinking slowly. The chair back is a soft
+> dark mass occupying the lower-left third, out of focus in the foreground. A thin
+> shaft of cold pre-dawn light enters from a window off-frame left, raking across
+> the desk surface and catching slow-drifting dust motes in the air. Deep shadows,
+> almost no fill light. The desk is bare — no papers, no cup, no phone. Extremely
+> slow push-in, roughly four percent over the shot. Shot on 35mm spherical, T2.8,
+> shallow depth of field, focus held on the centre monitor's cursor. Cold desaturated
+> grade, crushed near-black, slate and charcoal only, one violet accent from the
+> cursor. Fine 35mm grain, gentle halation around the cursor glow. Still, silent,
+> unattended. Photorealistic, 4K, 16:9, 24fps.
 
-**Why:** you opened on an empty room before the market and you close on an empty
-room after it. Nobody came. That is the claim.
+**Shot specification**
 
-### If you generate these
+| Parameter | Value | Why |
+|---|---|---|
+| Lens | 35mm spherical, T2.8 | Wide enough for all three monitors; 35mm keeps the room honest — 24mm would distort and read as a video game |
+| Camera height | 1.15 m — seated eye level | Puts the viewer exactly where the absent trader would sit. This is the whole point of the shot |
+| Angle | Dead-on, 8–10° off-axis to camera left | Pure symmetry looks artificial; a slight offset reads as a real room |
+| Movement | Push-in, ~4% over 6s, linear, slider | Must be barely perceptible. A visible move reads as stock footage |
+| Focus | Locked on the centre cursor | No rack focus. A focus pull implies an operator, and there is no operator |
+| Duration | 6.0s | Title needs 4s legible; 2s of clean room before it |
+| Frame rate | 24fps | Match to the screen capture or the cut will strobe |
 
-- **Locked-off or near-locked-off.** A drifting AI camera reads as stock footage.
-- **No people, no hands, no faces.** The moment a person appears the shot argues
-  against the thesis.
-- **No readable text on the generated screens.** Fake code or fake numbers in a
-  submission about auditability is the worst possible own goal. Amber cursor only.
-- **Match the deck.** Slate/charcoal ground, one amber accent, IBM Plex for titles.
-- 16:9, and match the screen-capture frame rate so the cuts don't jar.
+**Lighting**
+
+- **Key:** window light, frame left, ~5600K, low intensity, hard-edged shaft. Motivated, with visible atmospheric haze so the beam has body.
+- **Practical:** the cursor only. It should glow just enough to bloom slightly.
+- **Fill:** almost none. Contrast ratio ~8:1. Let the shadows go to near-black.
+- **Forbidden:** overhead office fluorescents, any practical lamp, any screen glow from the dark monitors. A lit room implies occupancy.
+
+**Motion — this is where generators fail**
+
+Only two things move: **the cursor blinks at about 1 Hz**, and **dust drifts in the
+light shaft**. Nothing else. No curtain movement, no reflection crawl, no chair
+rotation, no monitor flicker. If the generated clip adds motion, regenerate — a
+drifting object turns a deliberate shot into stock footage.
+
+**Negative prompt**
+
+```
+people, person, human, hands, fingers, face, silhouette, reflection of a person,
+readable text, legible code, visible numbers, charts, graphs, candlesticks, logos,
+brand marks, warm light, amber, orange, gold, tungsten, sunset, lens flare, bokeh
+balls, rack focus, handheld, camera shake, orbit, dolly zoom, crane move, timelapse,
+fast motion, neon, cyberpunk, cluttered desk, coffee cup, plant, RGB keyboard
+```
+
+**Title treatment, over the last 4s:** lower third, left-aligned to match the deck's
+margin. `THETA GATE` in IBM Plex Mono, letter-spaced, `#F5F5F5`. Below it, smaller,
+IBM Plex Sans in `#5B5B5B`: *an agent that cannot place a trade it should not.*
+Fade the type in over 0.5s. No slide, no typewriter effect.
+
+**Why this shot:** the empty chair is the thesis. Autonomy means nobody is sitting
+there at 10:30 on a Tuesday. Say Shot 1's line over it, then **cut hard** — no
+dissolve — to the live dashboard. The jump from the empty room to a populated
+journal makes the argument before you finish the sentence.
+
+---
+
+### SCENE B — outro · 4 seconds · 2:56–3:00
+
+**Paste this as the prompt:**
+
+> The identical empty trading desk from the identical camera position, now in flat
+> overcast midday daylight. All three monitors are switched fully off — dark grey
+> matte screens with no glow, no cursor, no image. The chair is still empty and
+> unmoved. The desk is still bare. The shaft of light is gone; the room is evenly
+> and softly lit, ordinary and unremarkable. No haze, no dust. Completely static
+> locked-off camera, absolutely no movement. Shot on 35mm spherical, T4, slightly
+> deeper focus than before. Neutral desaturated grade, soft contrast, cool grey and
+> charcoal. Fine 35mm grain. Photorealistic, 4K, 16:9, 24fps.
+
+**What changes from Scene A, and what must not**
+
+| | Scene A | Scene B |
+|---|---|---|
+| Camera position | Identical | **Identical** — this is what makes it land |
+| Movement | 4% push-in | **None at all** |
+| Light | Hard cold shaft, 8:1 | Flat overcast, ~2:1 |
+| Monitors | Centre one live, violet cursor | All off, no glow |
+| Aperture | T2.8 | T4 |
+| Haze / dust | Yes | None |
+
+Same framing is non-negotiable. If the second shot is even slightly reframed, the
+pairing reads as two stock clips instead of one room at two times of day.
+
+**Title, held 3s:** `github.com/Kalwaleed/theta-gate` and below it
+`7a013821-9249-4505-8025-fb298f0931a5`, both IBM Plex Mono, `#F5F5F5`, left-aligned
+to the same margin. Long enough to read at a comfortable pace — a judge may pause here.
+
+**Why:** you open on an empty room before the market and close on an empty room after
+it. Nobody came. That is the claim, made twice, without saying it.
+
+---
+
+### Generating these
+
+1. **Generate Scene A first and get it right before attempting B.** B must match A's
+   framing, so A is the reference.
+2. **Run 4–6 variations.** The failure mode is added motion and invented screen
+   content, not composition.
+3. **Reject any take with readable text on a monitor.** Invented code or fabricated
+   numbers in a submission about auditability is the one own goal you cannot recover
+   from. The centre screen is black with a cursor. Nothing else.
+4. **Reject any take with a person, a hand, or a human reflection**, however small.
+5. **Check the grade against `deck/theta-gate.pdf` side by side** before you cut.
+   Violet `#3F2AC1`, never amber.
+
+**If the generated takes look synthetic — and they may — shoot it practically.** A
+still photograph of a real empty desk with a 4% digital push-in, graded cold, beats
+an obviously artificial clip. The shot is deliberately simple so that a photograph
+carries it. Your own desk before sunrise, monitors off, one terminal open, phone on
+a tripod, is a legitimate and probably better answer.
