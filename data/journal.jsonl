@@ -491,3 +491,5 @@
 {"ts": "2026-09-03T09:37:13.783218-04:00", "event": "exit_filled", "position_id": "tg-e-20260901-1030-qqq", "underlying": "QQQ", "reason": "take_profit", "qty": 2, "requested_qty": 2, "close_debit": 0.29, "order_id": "97ff556c-b58b-43d3-a17b-89a5729da010", "client_order_id": "tg-x-20260901-1030-qqq-s0", "legs_confirmed_closed": true}
 {"ts": "2026-09-03T09:37:14.760159-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-03T09:37:14.760273-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 2, "entry_attempted": false}
+{"ts": "2026-09-03T09:44:52.719635-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-03T09:44:52.719771-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
