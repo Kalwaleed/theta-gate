@@ -78,9 +78,48 @@ the journal is exactly the error this entry is built to avoid.
 Fallback if the generated scene cards look synthetic: photograph your own desk
 before sunrise, monitors off, and add a 4% digital push. Said so in the script.
 
-### 2. Post `social/drafts/06-results-and-flat.md`
-Written, verified at **275 characters**, both required tags. Post it, then paste the
-URL into `social/README.md` and into the form.
+### 2. Post the final social post — full text below, copy it as-is
+
+Verified **275 characters** (X cap is 280), both required tags present. Do not
+reword it: the "ladder never fired" line is deliberate and correct, and the numbers
+are read from the journal.
+
+**X:**
+
+```
+Book is flat. Six autonomous sessions, $100k paper account.
+
+2 trades · 2 closed · +$95 · max drawdown -0.15%
+
+Both closed on take-profit at 09:37 ET, five hours before the flatten. The force-close ladder never fired.
+
+n=2 proves no edge. Posting anyway.
+
+@AlpacaHQ @lablabai
+```
+
+**LinkedIn:** (add the repo link at the end — `https://github.com/Kalwaleed/theta-gate`)
+
+```
+Theta Gate is flat. Final results from my Alpaca AI Trading Agents Hackathon entry with lablab.ai.
+
+Six sessions on a fresh $100,000 paper account. 2 trades placed, 2 closed, realised P&L +$95, maximum drawdown -0.15%.
+
+Both positions closed themselves at 09:37 ET this morning on the agent's take-profit rule — 50% of credit captured — five hours before Thursday's mandatory flatten deadline. No human placed or closed an order all week.
+
+Worth being precise about one thing, because the journal is public and anyone can check it: the four-rung force-close ladder I built for Thursday afternoon never executed. It is tested, and it was rehearsed against all four rungs, but the take-profit rule got there first. I am not going to describe a code path as proven when it has never run live.
+
+What I will not claim: that 2 trades says anything about edge. It does not. A variance risk premium strategy needs hundreds of samples before the number outruns the noise around it. Max drawdown is peak mark-to-market, not the flattering realised-only figure that would have read 0.0%.
+
+What six sessions do show is whether the machinery holds — whether every refusal was logged with a reason, whether the kill switch stayed reachable, whether a multi-leg order ever left a naked leg. Those are answerable at this sample size. Edge is not.
+
+Full write-up and the repository are linked below.
+
+#AlpacaHackathon #BuildInPublic
+```
+
+Then paste the resulting URL into `social/README.md` and into the form. That gets
+you to **5 of 5 eligible**, because post 01 does not count.
 
 ### 3. Fill the lablab.ai form
 Everything is in `submission/LABLAB-FORM.md`. Paste it.
