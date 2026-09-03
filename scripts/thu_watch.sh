@@ -28,15 +28,25 @@ seq=$(jw --since 0 | sed -n 's/^SEQ=//p')
 
 # 2. every rung, every decision-log row, until 15:51
 rungs_done=""
-check_rung() {          # $1 = rung HHMM. Cron drift is a real failure mode.
-  case " $rungs_done " in *" $1 "*) return;; esac
-  rungs_done="$rungs_done $1"
+# Two tiers, because Actions cron drift is normal here and a watcher that
+# cries wolf on every rung is worse than none. Measured 31 Aug - 2 Sep: the
+# 14:30 rung ran +5..+15m late, 15:00 +8..+12m, 15:30 +1..+7m, 15:45 +0..+4m.
+# So a quiet note at +6m, and a real alarm only past the observed envelope --
+# still inside the 30-minute rung spacing, with time to dispatch by hand.
+check_rung() {          # $1 = rung HHMM, $2 = "note" or "alarm"
+  case " $rungs_done " in *" $1:$2 "*) return;; esac
+  rungs_done="$rungs_done $1:$2"
   lt=$(jw --last-tick)
   ltt=$(printf '%s' "$lt" | cut -c12-16 | tr -d ':')
-  if [ -z "$ltt" ] || [ "$ltt" -lt "$1" ]; then
-    echo "!!! RUNG $1: NO TICK LANDED -- cron is late or did not fire. Last tick: ${lt:-none}"
+  if [ -n "$ltt" ] && [ "$ltt" -ge "$1" ]; then
+    late=$(( (ltt/100*60 + ltt%100) - ($1/100*60 + $1%100) ))
+    echo "    rung $1: tick landed $lt  (+${late}m)"
+    rungs_done="$rungs_done $1:note $1:alarm"   # settled, skip the other tier
+  elif [ "$2" = "alarm" ]; then
+    echo "!!! RUNG $1: STILL NO TICK past the observed drift envelope -- cron did not fire."
+    echo "!!! Last tick: ${lt:-none}.  Dispatch by hand:  gh workflow run agent.yml"
   else
-    echo "    rung $1: tick landed $lt"
+    echo "    rung $1: no tick yet (normal so far -- this rung has run up to +15m late)"
   fi
 }
 while :; do
@@ -49,10 +59,12 @@ while :; do
       echo "!!! FORCE_CLOSE_UNRESOLVED -- final rung, position still open, no order placed. INTERVENE. !!!"
   fi
   t=$(now_et '%H%M')
-  for r in 1430:1436 1500:1506 1530:1536 1545:1551; do
-    [ "$t" -ge "${r##*:}" ] && check_rung "${r%%:*}"
+  for r in 1430:1436:note 1430:1447:alarm 1500:1506:note 1500:1517:alarm \
+           1530:1536:note 1530:1544:alarm 1545:1550:note 1545:1554:alarm; do
+    rung=${r%%:*}; rest=${r#*:}; deadline=${rest%%:*}; tier=${rest##*:}
+    [ "$t" -ge "$deadline" ] && check_rung "$rung" "$tier"
   done
-  [ "$t" -ge 1551 ] && break
+  [ "$t" -ge 1555 ] && break
   sleep 60
 done
 
