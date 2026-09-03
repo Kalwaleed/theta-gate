@@ -83,10 +83,15 @@ and replayed into SQLite under a SHA-256 hash chain.
 
 ## Results
 
-Realised P&L **[P&L]** · **[n]** trades · win rate **[%]** · max drawdown **[%]**
-across **[s]** sessions.
+Realised P&L **$95.00** · **2** trades · win rate **100%** · max drawdown **-0.15%**
+across **6** sessions.
 
-What [n] trades can't show: edge. Swept from 0.15 to 0.45 delta, expected value
+Max drawdown is peak mark-to-market on the open book (-$151, 1 Sep 14:46 ET, from the
+agent's own quotes). Realised drawdown was $0.00 -- both trades closed green -- but
+quoting that as the drawdown would flatter a book that was genuinely underwater.
+Win rate at n=2 is arithmetic, not evidence.
+
+What 2 trades can't show: edge. Swept from 0.15 to 0.45 delta, expected value
 comes out negative every time, by exactly the bid-ask cost. Delta is the
 risk-neutral probability, so a fairly priced chain can't yield edge by
 arithmetic alone.

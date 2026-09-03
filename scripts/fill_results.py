@@ -61,14 +61,26 @@ def collect(starting_equity=100_000):
     }
 
 
+def _tex(v):
+    """The same value string goes into a Markdown file and a LaTeX file, and
+    LaTeX cannot take it raw. `%` is a COMMENT there: "100%" silently ate the
+    rest of its line, closing braces included, and the build died with
+    "Runaway argument? ... File ended while scanning use of \\frame" after
+    emitting a truncated 9-page PDF. `$` opens math mode the same way. Escape
+    on the way into the deck only -- Markdown wants them raw."""
+    for ch in ("&", "%", "$", "#", "_"):
+        v = v.replace(ch, "\\" + ch)
+    return v
+
+
 def apply(vals, dry_run):
     # The deck has two \PLACEHOLDER{\%}: win rate first, max drawdown
     # second, in frame order. They are NOT the same number.
     deck = DECK.read_text(encoding="utf-8")
-    deck_new = (deck.replace(r"\PLACEHOLDER{P\&L}", vals["P&L"])
-                    .replace(r"\PLACEHOLDER{n}", vals["n"]))
-    deck_new = deck_new.replace(r"\PLACEHOLDER{\%}", vals["%"], 1)
-    deck_new = deck_new.replace(r"\PLACEHOLDER{\%}", vals["drawdown"], 1)
+    deck_new = (deck.replace(r"\PLACEHOLDER{P\&L}", _tex(vals["P&L"]))
+                    .replace(r"\PLACEHOLDER{n}", _tex(vals["n"])))
+    deck_new = deck_new.replace(r"\PLACEHOLDER{\%}", _tex(vals["%"]), 1)
+    deck_new = deck_new.replace(r"\PLACEHOLDER{\%}", _tex(vals["drawdown"]), 1)
 
     wu = WRITEUP.read_text(encoding="utf-8")
     wu_new = (wu.replace("[P&L]", vals["P&L"])
