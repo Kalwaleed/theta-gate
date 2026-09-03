@@ -74,7 +74,7 @@ def flat(journal_path):
     return 1 if open_now else 0
 
 
-def stats(conn, starting_equity):
+def stats(conn, starting_equity, journal_path):
     """The four deck numbers. Print only -- the deck is filled by hand, in
     one sitting, from one source."""
     s = store.summary(conn, starting_equity)
@@ -88,8 +88,32 @@ def stats(conn, starting_equity):
     print(f"realised P&L   ${s['realised_pnl_dollars']:+,.2f}")
     print(f"trades closed  {closed}")
     print(f"win rate       {(100.0 * s['wins'] / closed) if closed else 0:.0f}%  ({s['wins']}/{closed})")
-    print(f"max drawdown   ${drawdown:,.2f}")
+    # Two drawdowns, and the realised one alone would flatter the book.
+    # store.equity_curve is realised-only by design (see its docstring), so
+    # when every trade closes green it never dips and prints $0.00 -- while
+    # the open book was genuinely underwater. The deck and the write-up quote
+    # the mark-to-market figure; print both so they cannot drift apart.
+    mtm = _peak_unrealised(journal_path)
+    print(f"max drawdown   {mtm / starting_equity:.2%}  (peak mark-to-market, ${mtm:,.2f})")
+    print(f"               ${drawdown:,.2f}  realised-only -- do NOT quote this alone")
     return 0
+
+
+def _peak_unrealised(journal_path):
+    """Worst simultaneous unrealised loss across the open book, from the
+    agent's own exit_evaluated marks. Negative, or 0.0 if never underwater."""
+    loop.JOURNAL_PATH = journal_path
+    events = loop._read_journal()
+    credit, qty, open_marks, worst = {}, {}, {}, 0.0
+    for e in events:
+        pid = e.get("position_id")
+        if e.get("event") == "entry_filled" and pid:
+            credit[pid], qty[pid] = e.get("credit"), e.get("qty", 1)
+        elif e.get("event") == "exit_evaluated" and pid in credit \
+                and e.get("cost_to_close") is not None:
+            open_marks[pid] = (credit[pid] - e["cost_to_close"]) * 100 * qty[pid]
+            worst = min(worst, sum(open_marks.values()))
+    return worst
 
 
 def main(argv=None):
@@ -112,7 +136,7 @@ def main(argv=None):
     if args.last_tick:
         return last_tick(conn)
     if args.stats:
-        return stats(conn, args.starting_equity)
+        return stats(conn, args.starting_equity, args.journal)
     return since(conn, args.since or 0, args.limit)
 
 
