@@ -26,12 +26,19 @@ count.** As of 31 Aug that leaves **0 of 5 eligible posts**, which is why
 
 | # | Slug | Status | X link | LinkedIn link |
 |---|---|---|---|---|
-| 01 | kickoff-and-the-first-finding | posted 2026-08-27 — **outside window, not submittable** | [link](https://x.com/KhaledAlwaleed/status/2092879101082128628?s=20) | [link](https://www.linkedin.com/feed/update/urn:li:share:7498670508427886592/) |
-| 02 | first-live-trade | drafted — post Mon 31 Aug eve or Tue 1 Sep | | |
-| 03 | the-only-edge-and-a-disclosure | drafted — post Tue 1 Sep | | |
-| 04 | the-llm-is-the-least-powerful-part | drafted — post Wed 2 Sep | | |
-| 05 | a-green-check-proves-what-it-calls | drafted — post Wed 2 Sep eve or Thu 3 Sep | | |
-| 06 | results-and-flat | **skeleton — numbers pending Thu 3 Sep flatten** | | |
+| 01 | kickoff-and-the-first-finding | posted **27 Aug 03:37 ET** — 31h before kick-off, **NOT submittable** | [link](https://x.com/KhaledAlwaleed/status/2092879101082128628) | [link](https://www.linkedin.com/feed/update/urn:li:share:7498670508427886592/) |
+| 02 | first-live-trade | posted **2 Sep 03:18 ET** — eligible | [link](https://x.com/KhaledAlwaleed/status/2095048707511394537) | |
+| 03 | the-only-edge-and-a-disclosure | posted **3 Sep 03:05 ET** — eligible | [link](https://x.com/KhaledAlwaleed/status/2095407737564004463) | |
+| 04 | the-llm-is-the-least-powerful-part | posted **3 Sep 08:45 ET** — eligible | [link](https://x.com/KhaledAlwaleed/status/2095493420655763551) | |
+| 05 | a-green-check-proves-what-it-calls | posted **3 Sep 14:07 ET** — eligible | [link](https://x.com/KhaledAlwaleed/status/2095574400942915688) | |
+| 06 | results-and-flat | **READY — post to reach 5 of 5.** Rewritten 3 Sep: numbers are real, and the ladder claim was false | | |
+
+**4 of 5 eligible.** Post timestamps decoded from the X snowflake IDs, not
+estimated; the decode independently reproduces the 27 Aug date recorded by hand
+for post 01. Posting draft 06 fills the fifth slot.
+
+**Submit posts 02-06. Do NOT submit 01** — it predates the 28 Aug 11:00 ET
+kick-off and burns a slot for nothing.
 
 Every X draft is verified at or under 280 characters and carries both
 `@AlpacaHQ` and `@lablabai`. Links go in the two columns above as they're
