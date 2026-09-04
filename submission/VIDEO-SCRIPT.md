@@ -241,8 +241,6 @@ it. Nobody came. That is the claim, made twice, without saying it.
 
 ### Generating these
 
-**Done 4 Sep 2026.** Both clips are in `submission/video/`: `scene-a.mp4` (6 s, push-in, violet cursor) and `scene-b.mp4` (4 s, static, monitors off, generated from Scene A's first frame so the framing matches). One alternate of each sits beside them. Seedance 2.5, 1920x1080, 24 fps, silent. Titles are not burned in; add them in the edit. The steps below are what produced them.
-
 1. **Generate Scene A first and get it right before attempting B.** B must match A's
    framing, so A is the reference.
 2. **Run 4–6 variations.** The failure mode is added motion and invented screen
