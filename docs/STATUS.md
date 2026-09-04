@@ -1,6 +1,6 @@
 # Status — Theta Gate
 
-**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated **Fri 4 Sep 2026, ~09:00 ET (16:00 Riyadh). SUBMITTED. Closed out.** Everything below the first section is history.
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated **Fri 4 Sep 2026, 13:50 ET (20:50 Riyadh). SUBMISSION STATUS UNVERIFIED.** Everything below the first section is history.
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
@@ -12,7 +12,16 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 
 ## Right now, this exact moment
 
-### Fri 4 Sep — CLOSED OUT. Submitted to lablab.ai before the 11:00 ET deadline.
+### Fri 4 Sep — submission not visible on lablab.ai
+
+At 13:45 ET, logged in, PK could not see a Theta Gate submission in the account. The public
+submissions list for the event (431 entries) has no entry named Theta Gate and none under
+Kalwaleed; the two similarly named entries (`theta-council`, `notafinancedude/thetagate`)
+link to other people's repos. lablab's rule book: *"Manual submission is available for 6
+hours post-hackathon for those with valid reasons and prior approval from organizers or
+mentors."* That window closes **17:00 ET / 00:00 Riyadh, 4–5 Sep**. Contact: Discord
+`https://discord.gg/lablabai`. The form content is still in `submission/LABLAB-FORM.md`.
+
 
 | | |
 |---|---|
