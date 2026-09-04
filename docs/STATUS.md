@@ -1,6 +1,6 @@
 # Status — Theta Gate
 
-**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated Wed 2 Sep 2026, ~04:50 ET (11:50 Riyadh), before the open. Third and final entry day. Deadline: **submission Fri 4 Sep, 11:00 ET.**
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated **Fri 4 Sep 2026, ~09:00 ET (16:00 Riyadh). SUBMITTED. Closed out.** Everything below the first section is history.
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
@@ -11,6 +11,28 @@ Multiple Claude sessions have touched this repo. This one is `theta-gate-scoped-
 ---
 
 ## Right now, this exact moment
+
+### Fri 4 Sep — CLOSED OUT. Submitted to lablab.ai before the 11:00 ET deadline.
+
+| | |
+|---|---|
+| Realised P&L | **+$95.00** (2 placed, 2 closed, 2 wins; n=2 says nothing about edge) |
+| Max drawdown | **-0.15%** peak mark-to-market (-$151, 1 Sep 14:46) |
+| Sessions | 6 (29 Aug – 3 Sep); entries closed Wed 2 Sep 10:45 ET |
+| Exit | both legs closed on `take_profit` Thu 3 Sep 09:37 ET; **the force-close ladder never ran** |
+| Journal at Thu close | 582 events, 178 ticks, hash chain intact, broker FLAT |
+| Broker equity | $100,094.54 (journal $100,095.00; $0.46 is fees) |
+| Tests | 344, CI green |
+| Repo | public since 31 Aug |
+| Deck | `deck/theta-gate.pdf`, 13 pages, `make check` clean 4 Sep |
+
+Friday's `agent.yml` cron still ticks 09:30–16:00 ET; the book is flat and entries are closed, so every tick is a no-op that only grows the journal. Nothing needs re-arming or watching.
+
+**Not recorded in the repo:** the post 06 X/LinkedIn URLs and the video URL. `social/README.md` row 06 and `submission/LABLAB-FORM.md` rows "5" and "Video presentation" still read pending. Paste them when convenient; nothing downstream depends on it.
+
+**After the deadline, not before:** fix the 8:1/4:1 inconsistency at its source, `docs/PLAN.md:149`.
+
+---
 
 ### Wed 2 Sep, pre-open — the book, marked to Tuesday's close
 
@@ -208,7 +230,7 @@ Use `.venv/bin/python3`, never system `python3`. A live local tick requires `--l
 
 **Kill switch:** set `active: true` in `data/HALT.json`. Blocks new entries; exits and reconciliation keep running by design. Git-published each tick so it survives the ephemeral runner.
 
-Repo: `https://github.com/Kalwaleed/theta-gate` (private, 6 collaborators: msuiche, PasoUnleashed, Kalwaleed, turki-Twj, ghaus47, roymchoi).
+Repo: `https://github.com/Kalwaleed/theta-gate` (public since 31 Aug).
 
 ---
 
