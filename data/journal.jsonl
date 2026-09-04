@@ -582,3 +582,5 @@
 {"ts": "2026-09-03T16:19:50.385221-04:00", "event": "mcp_reconciliation", "level": "info", "clean": true, "model": "claude-opus-5", "server_version": "2.3.0", "matched": [], "journal_only": [], "broker_only": [], "broker_equity": [], "orders_seen": 2, "fills_unknown_to_journal": [], "journal_fills_unknown_to_broker": []}
 {"ts": "2026-09-04T09:36:09.820679-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-04T09:36:09.820839-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-04T09:44:02.689792-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-04T09:44:02.689915-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
