@@ -100,7 +100,7 @@ Autonomous Agents, Risk Management, Fintech
 | Field | Value |
 |---|---|
 | Cover image | `cover/cover.png` (in repo) |
-| Video presentation | **PENDING — not yet recorded.** See `submission/VIDEO-SCRIPT.md` |
+| Video presentation | Produced outside this repo |
 | Slide presentation | `deck/theta-gate.pdf` — 13 pages |
 
 ---

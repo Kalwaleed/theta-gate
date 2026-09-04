@@ -85,7 +85,7 @@ reviews. Two findings decide it:
 
 ## Still outstanding
 
-- **Video** — not recorded. Shot list and spoken script ready at `submission/VIDEO-SCRIPT.md`;
+- **Video** — produced outside this repo;
   shots 1–7 are recordable now, shot 8 needs Thursday's flat book.
 - **Demo URL** — no deploy config exists. Plan is a screen recording as the floor, with a
   Streamlit deploy after Thursday's public flip if time allows.
@@ -107,7 +107,6 @@ reviews. Two findings decide it:
 | | |
 |---|---|
 | `submission/WRITEUP.md` | The required one-page write-up — judge-facing |
-| `submission/VIDEO-SCRIPT.md` | Shot list and spoken script |
 | `docs/STATUS.md` | Rolling history and the reasoning behind every decision above |
 | `docs/STRATEGY-REVIEW-2026-09-01.md` | Why the agent filters but does not select |
 | `docs/ANALYSIS-2026-08-30.md` | Sunday's full audit |
