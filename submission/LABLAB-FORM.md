@@ -59,7 +59,8 @@ when it is absent. It vetoed four candidates on that gate alone.
 
 RESULTS, AND WHAT THEY DO NOT SHOW
 
-Six sessions. 573 journal events, 174 ticks, 9 model proposals, 2 fills.
+Six sessions. 582 journal events and 178 ticks by Thursday's close, 9 model
+proposals, 2 fills.
 Realised P&L +$95, 2 for 2, max drawdown -0.15% measured peak mark-to-market —
 not the realised-only 0.0% that would have flattered it. Both positions closed
 themselves on the take-profit rule at 09:37 ET on the final day, five hours
