@@ -85,8 +85,7 @@ reviews. Two findings decide it:
 
 ## Still outstanding
 
-- **Video** — produced outside this repo;
-  shots 1–7 are recordable now, shot 8 needs Thursday's flat book.
+- **Video** — produced outside this repo.
 - **Demo URL** — no deploy config exists. Plan is a screen recording as the floor, with a
   Streamlit deploy after Thursday's public flip if time allows.
 - **Social** — 0 of 5 eligible posts. Post 01 went out 27 Aug, a day before the 28 Aug
