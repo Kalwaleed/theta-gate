@@ -1,6 +1,9 @@
 # Status — Theta Gate
 
-**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated **Fri 4 Sep 2026, 13:50 ET (20:50 Riyadh). SUBMISSION STATUS UNVERIFIED.** Everything below the first section is history.
+**Rolling status log, not a one-time handoff — updated in place as the trading day progresses.** Last updated **Fri 4 Sep 2026, 21:00 Riyadh (14:00 ET). PROJECT CLOSED — not entered.** The submission never
+reached lablab.ai and a LabLab Admin confirmed in the public Discord (#participants-chat-alpaca-ai-trading-agents-hackathon,
+4 Sep, 7:47 PM) that late submissions cannot be accepted regardless of quality or reason. No manual-submission path applies.
+Everything below the first section is history.
 
 **Verify before trusting this file** — `git log --oneline -5`, `pytest -q`, `gh pr list`, `gh run list --workflow="Theta Gate Agent" --limit 5`. If it disagrees with the repo, the repo is right. No commit hash is quoted here as "current"; they go stale immediately, the agent's own `journal:` commits included.
 
