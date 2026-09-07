@@ -697,3 +697,5 @@
 {"ts": "2026-09-07T10:42:11.751456-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
 {"ts": "2026-09-07T10:47:24.871217-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-07T10:47:24.871342-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-07T10:53:23.324322-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-07T10:53:23.324439-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
