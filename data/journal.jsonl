@@ -824,3 +824,5 @@
 {"ts": "2026-09-08T13:19:49.128484-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
 {"ts": "2026-09-08T13:28:30.937893-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-08T13:28:30.938013-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-08T13:35:54.975573-04:00", "event": "no_trade", "reason": "regime_data_unavailable", "detail": "VIX-family feeds disagree on last date: {'vix': '09/07/2026', 'vix9d': '09/04/2026', 'vix3m': '09/04/2026'}"}
+{"ts": "2026-09-08T13:35:54.975785-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
