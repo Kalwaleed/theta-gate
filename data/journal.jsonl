@@ -919,3 +919,5 @@
 {"ts": "2026-09-09T13:40:56.492923-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.242680453, "raw_response": "<timeout>", "proposal": null}
 {"ts": "2026-09-09T13:40:56.493100-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
 {"ts": "2026-09-09T13:40:56.493177-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
+{"ts": "2026-09-09T13:46:25.803903-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-09T13:46:25.804027-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
