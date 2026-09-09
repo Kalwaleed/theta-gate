@@ -876,3 +876,6 @@
 {"ts": "2026-09-09T10:32:24.052483-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.22044355199999, "raw_response": "<timeout>", "proposal": null}
 {"ts": "2026-09-09T10:32:24.052656-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
 {"ts": "2026-09-09T10:32:24.052731-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
+{"ts": "2026-09-09T10:42:41.064198-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.234971884000004, "raw_response": "<timeout>", "proposal": null}
+{"ts": "2026-09-09T10:42:41.064395-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
+{"ts": "2026-09-09T10:42:41.064462-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
