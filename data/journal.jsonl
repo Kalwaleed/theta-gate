@@ -1052,3 +1052,4 @@
 {"ts": "2026-09-10T15:59:28.027228-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
 {"ts": "2026-09-10T16:01:17.673718-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-10T16:01:17.673850-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-10T16:21:51.617584-04:00", "event": "mcp_reconciliation_failed", "level": "warning", "error": "ResultError: Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid. (exit code: 1)", "model": "claude-opus-5", "server_version": "2.3.0"}
