@@ -969,3 +969,6 @@
 {"ts": "2026-09-10T10:30:58.983759-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.22650738700003, "raw_response": "<timeout>", "proposal": null}
 {"ts": "2026-09-10T10:30:58.983949-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
 {"ts": "2026-09-10T10:30:58.984044-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
+{"ts": "2026-09-10T10:42:30.904897-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.23185647899999, "raw_response": "<timeout>", "proposal": null}
+{"ts": "2026-09-10T10:42:30.905072-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
+{"ts": "2026-09-10T10:42:30.905147-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
