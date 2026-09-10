@@ -996,3 +996,5 @@
 {"ts": "2026-09-10T12:20:36.425283-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
 {"ts": "2026-09-10T12:30:01.932734-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-10T12:30:01.932870-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-10T12:39:46.866004-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-10T12:39:46.866122-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
