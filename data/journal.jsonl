@@ -1113,3 +1113,5 @@
 {"ts": "2026-09-11T13:40:31.868490-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.222331395, "raw_response": "<timeout>", "proposal": null}
 {"ts": "2026-09-11T13:40:31.868661-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
 {"ts": "2026-09-11T13:40:31.868739-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
+{"ts": "2026-09-11T13:45:28.543778-04:00", "event": "no_trade", "reason": "outside_entry_window"}
+{"ts": "2026-09-11T13:45:28.543890-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
