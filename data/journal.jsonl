@@ -1107,3 +1107,6 @@
 {"ts": "2026-09-11T13:17:12.572242-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
 {"ts": "2026-09-11T13:26:01.744967-04:00", "event": "no_trade", "reason": "outside_entry_window"}
 {"ts": "2026-09-11T13:26:01.745092-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": false}
+{"ts": "2026-09-11T13:33:07.975215-04:00", "event": "proposal", "schema_version": "brain-v1", "model": "claude-opus-5", "latency_seconds": 35.294772773999995, "raw_response": "<timeout>", "proposal": null}
+{"ts": "2026-09-11T13:33:07.975383-04:00", "event": "no_trade", "reason": "model_failure_or_malformed"}
+{"ts": "2026-09-11T13:33:07.975491-04:00", "event": "tick_completed", "ok": true, "halt_active": false, "orphan_symbols": [], "exits": 0, "entry_attempted": true}
